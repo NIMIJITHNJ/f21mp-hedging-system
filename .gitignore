@@ -1,0 +1,16 @@
+# Environment variables — never commit this
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pkl
+
+# Data files — too large for git
+data/raw/
+data/processed/
+
+# Model outputs
+outputs/models/
