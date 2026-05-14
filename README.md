@@ -11,3 +11,15 @@ hedging using Nifty 50 index futures (NSE, India).
 
 ## Stack
 Python 3.14 · TensorFlow/Keras · arch · Unified Planning Library · SHAP · Kite Connect
+
+## Data
+
+Raw data is not committed to this repository. To regenerate:
+
+1. Add your Kite Connect credentials to `.env`
+2. Run `python src/data/fetch_data.py`
+
+This fetches 557 trading days (Jan 2023 – Mar 2025) for:
+- Nifty 50 spot index
+- Nifty continuous futures (with OI)
+- 10 Nifty 50 constituent stocks
