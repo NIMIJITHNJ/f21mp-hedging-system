@@ -2,8 +2,8 @@
 fetch_data.py
 
 Fetches historical OHLCV and open interest data from Kite Connect for the
-Nifty 50 spot index, Nifty front-month futures (rolled monthly), and ten
-Nifty 50 constituent stocks. All data is saved as CSV files in data/raw/.
+Nifty 50 spot index, Nifty continuous futures, and ten Nifty 50 constituent
+stocks. All data is saved as CSV files in data/raw/.
 
 Training period  : January 2023 to September 2024
 Validation period: October 2024 to December 2024
@@ -50,39 +50,11 @@ STOCK_INSTRUMENTS = [
     ("NSE", "AXISBANK",   "AXISBANK"),
 ]
 
-# Kite Connect has no single continuous futures symbol, so we roll manually.
-# Each entry covers the window where that contract is the active front-month.
-# Roll dates are set to the last trading day of the expiring contract so we
-# avoid fetching thin near-expiry volume into the next contract's window.
-NIFTY_FUTURES_EXPIRIES = [
-    ("NFO", "NIFTY23JANFUT", date(2023, 1,  1),  date(2023, 1,  26)),
-    ("NFO", "NIFTY23FEBFUT", date(2023, 1,  27), date(2023, 2,  23)),
-    ("NFO", "NIFTY23MARFUT", date(2023, 2,  24), date(2023, 3,  30)),
-    ("NFO", "NIFTY23APRFUT", date(2023, 3,  31), date(2023, 4,  27)),
-    ("NFO", "NIFTY23MAYFUT", date(2023, 4,  28), date(2023, 5,  25)),
-    ("NFO", "NIFTY23JUNFUT", date(2023, 5,  26), date(2023, 6,  29)),
-    ("NFO", "NIFTY23JULFUT", date(2023, 6,  30), date(2023, 7,  27)),
-    ("NFO", "NIFTY23AUGFUT", date(2023, 7,  28), date(2023, 8,  31)),
-    ("NFO", "NIFTY23SEPFUT", date(2023, 9,  1),  date(2023, 9,  28)),
-    ("NFO", "NIFTY23OCTFUT", date(2023, 9,  29), date(2023, 10, 26)),
-    ("NFO", "NIFTY23NOVFUT", date(2023, 10, 27), date(2023, 11, 30)),
-    ("NFO", "NIFTY23DECFUT", date(2023, 12, 1),  date(2023, 12, 28)),
-    ("NFO", "NIFTY24JANFUT", date(2023, 12, 29), date(2024, 1,  25)),
-    ("NFO", "NIFTY24FEBFUT", date(2024, 1,  26), date(2024, 2,  29)),
-    ("NFO", "NIFTY24MARFUT", date(2024, 3,  1),  date(2024, 3,  28)),
-    ("NFO", "NIFTY24APRFUT", date(2024, 3,  29), date(2024, 4,  25)),
-    ("NFO", "NIFTY24MAYFUT", date(2024, 4,  26), date(2024, 5,  30)),
-    ("NFO", "NIFTY24JUNFUT", date(2024, 5,  31), date(2024, 6,  27)),
-    ("NFO", "NIFTY24JULFUT", date(2024, 6,  28), date(2024, 7,  25)),
-    ("NFO", "NIFTY24AUGFUT", date(2024, 7,  26), date(2024, 8,  29)),
-    ("NFO", "NIFTY24SEPFUT", date(2024, 8,  30), date(2024, 9,  26)),
-    ("NFO", "NIFTY24OCTFUT", date(2024, 9,  27), date(2024, 10, 31)),
-    ("NFO", "NIFTY24NOVFUT", date(2024, 11, 1),  date(2024, 11, 28)),
-    ("NFO", "NIFTY24DECFUT", date(2024, 11, 29), date(2024, 12, 26)),
-    ("NFO", "NIFTY25JANFUT", date(2024, 12, 27), date(2025, 1,  30)),
-    ("NFO", "NIFTY25FEBFUT", date(2025, 1,  31), date(2025, 2,  27)),
-    ("NFO", "NIFTY25MARFUT", date(2025, 2,  28), date(2025, 3,  27)),
-]
+# Instrument token for the current Nifty front-month futures contract.
+# Confirmed from check_symbols.py — NIFTY26MAYFUT token=16914178.
+# Kite's continuous=True flag stitches all expired contracts automatically
+# when fetching historical data, so no manual rolling is needed.
+NIFTY_CONTINUOUS_TOKEN = 16914178
 
 
 def get_instrument_token(kite, exchange, tradingsymbol):
@@ -94,18 +66,21 @@ def get_instrument_token(kite, exchange, tradingsymbol):
     return None
 
 
-def fetch_historical(kite, instrument_token, from_date, to_date, oi=False):
+def fetch_historical(kite, instrument_token, from_date, to_date,
+                     oi=False, continuous=False):
     """
     Fetch daily OHLCV data from Kite Connect.
-    oi=True is only meaningful for futures — equities and the spot index
-    do not carry open interest in Kite's response.
+    oi=True includes open interest — only meaningful for futures.
+    continuous=True stitches expired contracts into one unbroken series,
+    which is how we get full historical futures data without needing
+    individual expiry tokens.
     """
     data = kite.historical_data(
         instrument_token=instrument_token,
         from_date=from_date,
         to_date=to_date,
         interval="day",
-        continuous=False,
+        continuous=continuous,
         oi=oi,
     )
     df = pd.DataFrame(data)
@@ -141,48 +116,32 @@ def fetch_spot_and_stocks(kite):
         time.sleep(0.4)  # Kite rate limit is ~3 requests/sec
 
 
-def fetch_nifty_futures_rolling(kite):
+def fetch_nifty_futures_continuous(kite):
     """
-    Fetch Nifty futures contract by contract and stitch into a single
-    rolling series. Each contract covers its active front-month window.
-    Duplicate dates at roll boundaries are dropped keeping the earlier
-    contract, which has better liquidity further from expiry.
+    Fetch a full continuous Nifty futures series using Kite's continuous
+    data feature. Passing continuous=True with the current front-month token
+    causes Kite to automatically stitch all expired contracts into one
+    unbroken daily series going back several years, including OI data.
+    This avoids the need to fetch and stitch individual monthly expiries.
     """
-    print("\nFetching Nifty futures (rolling) ...")
-    all_dfs = []
+    print("\nFetching Nifty futures (continuous) ...")
 
-    for exchange, symbol, start, end in NIFTY_FUTURES_EXPIRIES:
-        print(f"  {symbol} ({start} to {end})", end=" ... ")
-        token = get_instrument_token(kite, exchange, symbol)
-        if token is None:
-            print("WARNING: symbol not found, skipping.")
-            continue
-        df = fetch_historical(kite, token, start, end, oi=True)
-        if df.empty:
-            print("WARNING: no data returned, skipping.")
-            continue
-        # Keep track of which contract each row came from — useful for
-        # identifying roll dates during preprocessing
-        df["contract"] = symbol
-        all_dfs.append(df)
-        print(f"{len(df)} rows")
-        time.sleep(0.4)
-
-    if not all_dfs:
-        print("ERROR: no futures data fetched.")
-        return
-
-    combined = (
-        pd.concat(all_dfs, ignore_index=True)
-        .sort_values("date")
-        .drop_duplicates(subset="date", keep="first")
-        .reset_index(drop=True)
+    df = fetch_historical(
+        kite,
+        instrument_token=NIFTY_CONTINUOUS_TOKEN,
+        from_date=FROM_DATE,
+        to_date=TO_DATE,
+        oi=True,
+        continuous=True,
     )
 
-    save_csv(combined, "NIFTY_futures_rolling")
-    print(f"\n  Combined series: {len(combined)} rows")
-    print(f"  Date range    : {combined['date'].min()} to {combined['date'].max()}")
-    print(f"  Columns       : {list(combined.columns)}")
+    if df.empty:
+        print("ERROR: no data returned.")
+        return
+
+    save_csv(df, "NIFTY_futures_continuous")
+    print(f"  Date range : {df['date'].min()} to {df['date'].max()}")
+    print(f"  Columns    : {list(df.columns)}")
 
 
 def run_sanity_check():
@@ -208,7 +167,7 @@ if __name__ == "__main__":
     print(f"Connected as: {profile['user_name']} ({profile['email']})")
 
     fetch_spot_and_stocks(kite)
-    fetch_nifty_futures_rolling(kite)
+    fetch_nifty_futures_continuous(kite)
     run_sanity_check()
 
     print("\nAll raw data saved to data/raw/")
