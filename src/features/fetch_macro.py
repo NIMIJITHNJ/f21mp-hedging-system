@@ -23,7 +23,7 @@ import pandas as pd
 import yfinance as yf
 
 EXTERNAL_DIR  = "data/external"
-FROM_DATE     = "2023-01-01"
+FROM_DATE     = "2021-01-01"
 TO_DATE       = "2025-03-31"
 REFERENCE_CSV = "data/raw/NIFTY50_spot.csv"
 

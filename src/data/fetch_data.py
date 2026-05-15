@@ -5,7 +5,7 @@ Fetches historical OHLCV and open interest data from Kite Connect for the
 Nifty 50 spot index, Nifty continuous futures, and ten Nifty 50 constituent
 stocks. All data is saved as CSV files in data/raw/.
 
-Training period  : January 2023 to September 2024
+Training period  : January 2021 to September 2024
 Validation period: October 2024 to December 2024
 Test period      : January 2025 to March 2025
 
@@ -29,7 +29,7 @@ ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN")
 if not API_KEY or not ACCESS_TOKEN:
     raise ValueError("KITE_API_KEY or KITE_ACCESS_TOKEN not found in .env file.")
 
-FROM_DATE    = date(2023, 1, 1)
+FROM_DATE    = date(2021, 1, 1)
 TO_DATE      = date(2025, 3, 31)
 RAW_DATA_DIR = "data/raw"
 

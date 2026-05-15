@@ -17,9 +17,9 @@ from datetime import date
 RAW_DATA_DIR = "data/raw"
 
 # Expected date range
-EXPECTED_START = "2023-01-02"
+EXPECTED_START = "2021-01-01"
 EXPECTED_END   = "2025-03-28"
-EXPECTED_ROWS  = 557
+EXPECTED_ROWS  = 1053
 
 # All files we expect to exist
 EXPECTED_FILES = [
