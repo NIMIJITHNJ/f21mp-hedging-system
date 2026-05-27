@@ -1,96 +1,229 @@
 """
-portfolio.py
+Core portfolio and hedging logic for Hedra.
 
-Computes hedged portfolio return series from spot returns, futures returns,
-and hedge ratio decisions.
+The instrument being hedged is the equal-weight portfolio of 10 Nifty 50
+constituent stocks (RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS, SBIN, LT,
+BHARTIARTL, ITC, AXISBANK).
 
-Core formula:
-    hedged_return_t = spot_return_t - hedge_ratio_t × futures_return_t
+The hedging instrument is the Nifty 50 front-month futures contract.
 
-A hedge ratio of 0.0 means no hedge (full spot exposure).
-A hedge ratio of 1.0 means fully hedged (spot return fully offset by futures).
-Intermediate values represent partial hedges.
+The Nifty 50 spot index is used separately as:
+  1. A feature input for the LSTM/GARCH risk model (market regime signal)
+  2. A benchmark for portfolio performance comparison
 
-The hedge ratio used here is the VECM-derived optimal hedge ratio from the
-literature (Vasantha & Mallikarjunappa, 2018) as the baseline, overridden
-by the PDDL planner output during live operation.
+The spot index is NOT the instrument being hedged.
 
-Functions:
-    compute_returns()         — load spot and futures log returns
-    apply_hedge()             — apply hedge ratio series to compute hedged returns
-    compute_portfolio_value() — cumulative portfolio value from return series
+Hedge formula:
+    R_h(t) = R_portfolio(t) - h * R_futures(t)
+
+where:
+    R_portfolio(t)  = equal-weight average of the 10 stock log returns
+    R_futures(t)    = log return of the Nifty continuous futures series
+    h               = hedge ratio (scalar, determined by hedging strategy)
+    R_h(t)          = hedged portfolio return
+
+Run from the project root:
+    python src/evaluation/portfolio.py
 """
 
-import os
+import sys
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
-RAW_DIR = "data/raw"
+# Allow running directly from the project root: python src/evaluation/portfolio.py
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# ── Constants ────────────────────────────────────────────────────────────────
 
-def compute_returns(
-    spot_csv: str = "NIFTY50_spot.csv",
-    futures_csv: str = "NIFTY_futures_continuous.csv",
-) -> pd.DataFrame:
+RAW_DIR   = Path("data/raw")
+PORTFOLIO = [
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY",
+    "TCS", "SBIN", "LT", "BHARTIARTL", "ITC", "AXISBANK",
+]
+
+SPLIT_DATES = {
+    "train": ("2021-01-01", "2024-09-30"),
+    "val":   ("2024-10-01", "2024-12-31"),
+    "test":  ("2025-01-01", "2025-03-31"),
+    "full":  ("2021-01-01", "2025-03-31"),
+}
+
+# ── Data loading ─────────────────────────────────────────────────────────────
+
+def load_stock_prices() -> pd.DataFrame:
     """
-    Load spot and futures daily log returns from raw CSVs.
+    Load adjusted close prices for all 10 portfolio stocks.
 
-    Returns a DataFrame with columns:
-        spot_return    : daily log return of Nifty 50 spot
-        futures_return : daily log return of Nifty futures (continuous)
-
-    First row is NaN (no prior close to compute return from) and is dropped.
+    Returns a DataFrame indexed by date with one column per stock.
+    Rows where any stock has a missing price are dropped so all series
+    are perfectly aligned before computing returns.
     """
-    spot = pd.read_csv(
-        os.path.join(RAW_DIR, spot_csv),
-        parse_dates=["date"],
-    ).set_index("date").sort_index()
+    frames = {}
+    for sym in PORTFOLIO:
+        path = RAW_DIR / f"{sym}.csv"
+        df   = pd.read_csv(path, parse_dates=["date"])
+        df   = df.sort_values("date").set_index("date")
+        frames[sym] = df["close"]
 
-    futures = pd.read_csv(
-        os.path.join(RAW_DIR, futures_csv),
-        parse_dates=["date"],
-    ).set_index("date").sort_index()
+    prices = pd.DataFrame(frames).dropna()
+    return prices
 
-    returns = pd.DataFrame(index=spot.index)
-    returns["spot_return"]    = np.log(spot["close"] / spot["close"].shift(1))
-    returns["futures_return"] = np.log(futures["close"] / futures["close"].shift(1))
 
-    returns = returns.dropna()
-    return returns
+def load_futures_prices() -> pd.Series:
+    """
+    Load the continuous Nifty futures close prices.
+    This is the hedging instrument.
 
+    Returns a Series indexed by date, named 'futures'.
+    """
+    path = RAW_DIR / "NIFTY_futures_continuous.csv"
+    df   = pd.read_csv(path, parse_dates=["date"])
+    df   = df.sort_values("date").set_index("date")
+    return df["close"].rename("futures")
+
+
+def load_nifty_spot_prices() -> pd.Series:
+    """
+    Load Nifty 50 spot index close prices.
+
+    Dual purpose:
+      - Feature input: Nifty spot movement feeds into the LSTM/GARCH model
+        as a market regime signal, informing hedge ratio decisions.
+      - Benchmark: after backtesting, portfolio performance is compared
+        against the Nifty 50 to measure alpha.
+
+    The spot index is NOT the instrument being hedged.
+
+    Returns a Series indexed by date, named 'nifty_spot'.
+    """
+    path = RAW_DIR / "NIFTY50_spot.csv"
+    df   = pd.read_csv(path, parse_dates=["date"])
+    df   = df.sort_values("date").set_index("date")
+    return df["close"].rename("nifty_spot")
+
+
+# ── Return computation ────────────────────────────────────────────────────────
+
+def compute_stock_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute daily log returns for each of the 10 portfolio stocks.
+    First row (NaN) is dropped.
+    """
+    return np.log(prices / prices.shift(1)).dropna()
+
+
+def compute_portfolio_returns(stock_returns: pd.DataFrame) -> pd.Series:
+    """
+    Compute daily equal-weight portfolio log returns.
+
+    Each of the 10 stocks receives weight 1/10. The portfolio return
+    on day t is the simple average of the 10 individual log returns.
+
+    Returns a Series named 'portfolio'.
+    """
+    return stock_returns.mean(axis=1).rename("portfolio")
+
+
+def compute_futures_returns(futures_prices: pd.Series) -> pd.Series:
+    """
+    Compute daily log returns of the Nifty futures series.
+    Returns a Series named 'futures'.
+    """
+    return np.log(futures_prices / futures_prices.shift(1)).dropna().rename("futures")
+
+
+def compute_nifty_spot_returns(spot_prices: pd.Series) -> pd.Series:
+    """
+    Compute daily log returns of the Nifty 50 spot index.
+    Used as feature input and benchmark — not part of the hedge formula.
+    Returns a Series named 'nifty_spot'.
+    """
+    return np.log(spot_prices / spot_prices.shift(1)).dropna().rename("nifty_spot")
+
+
+# ── Hedged return series ──────────────────────────────────────────────────────
 
 def apply_hedge(
-    returns: pd.DataFrame,
-    hedge_ratios: pd.Series,
+    portfolio_returns: pd.Series,
+    futures_returns: pd.Series,
+    hedge_ratio: float,
 ) -> pd.Series:
     """
-    Apply a time-varying hedge ratio to compute the hedged portfolio return.
+    Apply a constant hedge ratio to produce hedged portfolio returns.
+
+    Formula:
+        R_h(t) = R_portfolio(t) - hedge_ratio * R_futures(t)
+
+    The short futures position offsets systematic market exposure in the
+    stock portfolio. When the market falls, futures gains partially
+    compensate for portfolio losses.
+
+    hedge_ratio = 0.0  →  no hedge (unhedged portfolio)
+    hedge_ratio = 1.0  →  fully hedged
 
     Parameters
     ----------
-    returns : DataFrame with columns spot_return and futures_return,
-              indexed by date.
-    hedge_ratios : Series of hedge ratios indexed by date.
-                   Values should be between 0.0 (no hedge) and 1.0 (full hedge).
-                   Dates not in the index default to 0.0 (no hedge).
+    portfolio_returns : daily equal-weight portfolio log returns
+    futures_returns   : daily Nifty futures log returns
+    hedge_ratio       : scalar h in the hedge formula
 
     Returns
     -------
-    hedged_returns : Series of daily hedged log returns.
-
-    Formula
-    -------
-    hedged_return_t = spot_return_t - hedge_ratio_t × futures_return_t
+    Series of hedged portfolio returns, named 'hedged'.
     """
-    # Align hedge ratios to the return index, fill missing dates with 0
-    aligned_ratios = hedge_ratios.reindex(returns.index).fillna(0.0)
-
-    hedged = (
-        returns["spot_return"]
-        - aligned_ratios * returns["futures_return"]
+    aligned = pd.concat(
+        [portfolio_returns, futures_returns], axis=1, join="inner"
     )
-    hedged.name = "hedged_return"
-    return hedged
+    hedged = aligned["portfolio"] - hedge_ratio * aligned["futures"]
+    return hedged.rename("hedged")
+
+
+def build_return_series(
+    hedge_ratio: float,
+    split: str = "full",
+) -> pd.DataFrame:
+    """
+    Build a DataFrame with all return series aligned on common trading days.
+
+    Columns:
+        portfolio   - unhedged equal-weight portfolio returns (what is hedged)
+        futures     - Nifty futures returns (hedging instrument)
+        nifty_spot  - Nifty 50 spot returns (feature input + benchmark)
+        hedged      - hedged portfolio returns at the given hedge_ratio
+
+    Parameters
+    ----------
+    hedge_ratio : hedge ratio h to apply
+    split       : 'full' | 'train' | 'val' | 'test'
+
+    Returns
+    -------
+    DataFrame indexed by date with the four columns above.
+    """
+    # Load and compute returns
+    stock_returns     = compute_stock_returns(load_stock_prices())
+    portfolio_returns = compute_portfolio_returns(stock_returns)
+    futures_returns   = compute_futures_returns(load_futures_prices())
+    spot_returns      = compute_nifty_spot_returns(load_nifty_spot_prices())
+
+    # Align all series on common trading days
+    combined = pd.concat(
+        [portfolio_returns, futures_returns, spot_returns],
+        axis=1, join="inner"
+    ).dropna()
+
+    # Apply time-period split
+    if split in SPLIT_DATES:
+        start, end = SPLIT_DATES[split]
+        combined = combined.loc[start:end]
+
+    # Compute hedged portfolio returns
+    hedged = (
+        combined["portfolio"] - hedge_ratio * combined["futures"]
+    ).rename("hedged")
+
+    return combined.join(hedged)
 
 
 def compute_portfolio_value(
@@ -98,61 +231,70 @@ def compute_portfolio_value(
     initial_value: float = 1_000_000.0,
 ) -> pd.Series:
     """
-    Compute cumulative portfolio value from a log return series.
+    Convert a daily log return series into a cumulative portfolio value.
 
-    Parameters
-    ----------
-    returns       : Series of daily log returns.
-    initial_value : Starting portfolio value in ₹ (default ₹10,00,000).
+    Starts at initial_value (default ₹10,00,000) and compounds daily.
 
-    Returns
-    -------
-    portfolio_value : Series of daily portfolio values starting from
-                      initial_value on the first date.
-
-    Note: log returns are converted to simple returns for compounding:
-        value_t = value_{t-1} × exp(log_return_t)
+    Returns a Series of portfolio values indexed by date.
     """
-    cumulative    = returns.cumsum().apply(np.exp)
-    portfolio_val = cumulative * initial_value
-    portfolio_val.name = "portfolio_value"
-    return portfolio_val
+    value = initial_value * np.exp(returns.cumsum())
+    return value.rename("portfolio_value")
 
+
+# ── Convenience wrapper ───────────────────────────────────────────────────────
 
 def build_hedged_series(
-    hedge_ratios: pd.Series,
-    start_date: str = None,
-    end_date: str = None,
+    hedge_ratio: float,
+    split: str = "test",
     initial_value: float = 1_000_000.0,
-) -> pd.DataFrame:
+) -> dict:
     """
-    Convenience function — loads returns, applies hedge, computes portfolio value.
+    Build all series needed for evaluation in one call.
 
-    Parameters
-    ----------
-    hedge_ratios  : Series of hedge ratios indexed by date.
-    start_date    : Optional filter start date (inclusive), e.g. "2025-01-01".
-    end_date      : Optional filter end date (inclusive), e.g. "2025-03-28".
-    initial_value : Starting portfolio value in ₹.
+    Returns a dict with keys:
+        returns          - DataFrame (portfolio, futures, nifty_spot, hedged)
+        portfolio_value  - cumulative value of the unhedged stock portfolio
+        hedged_value     - cumulative value of the hedged stock portfolio
+        nifty_value      - cumulative value of Nifty 50 benchmark (comparison)
+        hedge_ratio      - the hedge ratio used
+        split            - the data split used
 
-    Returns
-    -------
-    DataFrame with columns:
-        spot_return, futures_return, hedge_ratio,
-        hedged_return, portfolio_value
+    Note: portfolio_value and hedged_value reflect the 10-stock portfolio.
+          nifty_value is purely a benchmark — it is not a tradeable position.
     """
-    returns = compute_returns()
+    returns = build_return_series(hedge_ratio=hedge_ratio, split=split)
 
-    if start_date:
-        returns = returns[returns.index >= start_date]
-    if end_date:
-        returns = returns[returns.index <= end_date]
+    return {
+        "returns":         returns,
+        "portfolio_value": compute_portfolio_value(
+            returns["portfolio"], initial_value
+        ),
+        "hedged_value":    compute_portfolio_value(
+            returns["hedged"], initial_value
+        ),
+        "nifty_value":     compute_portfolio_value(
+            returns["nifty_spot"], initial_value
+        ),
+        "hedge_ratio":     hedge_ratio,
+        "split":           split,
+    }
 
-    hedged_ret = apply_hedge(returns, hedge_ratios)
-    port_val   = compute_portfolio_value(hedged_ret, initial_value)
 
-    result = returns.copy()
-    result["hedge_ratio"]     = hedge_ratios.reindex(returns.index).fillna(0.0)
-    result["hedged_return"]   = hedged_ret
-    result["portfolio_value"] = port_val
-    return result
+# ── Smoke test ────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    print("Building return series (full period, hedge_ratio=0.5) ...")
+    result = build_hedged_series(hedge_ratio=0.5, split="full")
+    r = result["returns"]
+
+    print(f"\n  Date range      : {r.index[0].date()} to {r.index[-1].date()}")
+    print(f"  Rows            : {len(r)}")
+    print(f"  Columns         : {list(r.columns)}")
+    print(f"\n  Portfolio return (mean daily) : {r['portfolio'].mean():.6f}")
+    print(f"  Futures   return (mean daily) : {r['futures'].mean():.6f}")
+    print(f"  Nifty spot return(mean daily) : {r['nifty_spot'].mean():.6f}")
+    print(f"  Hedged   return (mean daily)  : {r['hedged'].mean():.6f}")
+    print(f"\n  Portfolio cumulative value    : ₹{result['portfolio_value'].iloc[-1]:>12,.0f}")
+    print(f"  Hedged    cumulative value    : ₹{result['hedged_value'].iloc[-1]:>12,.0f}")
+    print(f"  Nifty benchmark value         : ₹{result['nifty_value'].iloc[-1]:>12,.0f}")
+    print(f"\n  (Nifty benchmark is for comparison only — not a position in the portfolio)")

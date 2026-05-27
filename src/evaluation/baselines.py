@@ -1,190 +1,152 @@
 """
-baselines.py
+Three baseline hedging strategies applied to the 10-stock equal-weight
+portfolio, hedged using Nifty 50 futures.
 
-Two baseline hedging strategies used as benchmarks in the Hedra evaluation:
+The Nifty 50 spot index appears only as a benchmark comparison — it is
+NOT the instrument being hedged.
 
-1. No Hedge       — hedge ratio fixed at 0.0 throughout (pure spot exposure)
-2. Static Hedge   — hedge ratio fixed at 0.5 throughout (standard 50% hedge)
-3. VECM Optimal   — hedge ratio fixed at 0.8824 (Vasantha & Mallikarjunappa 2018)
+Baseline 1 — No hedge        (hedge_ratio = 0.00)
+Baseline 2 — Static 50%      (hedge_ratio = 0.50)
+Baseline 3 — VECM static     (hedge_ratio = 0.8824, from Vasantha &
+                               Mallikarjunappa 2015, applied here to
+                               the stock portfolio rather than the index)
 
-These baselines are compared against the dynamic LSTM-GARCH-PDDL strategy
-in Week 9 evaluation. A good dynamic strategy should outperform all three
-on risk-adjusted metrics (Sharpe, Sortino, CVaR) while maintaining
-competitive returns.
+Each baseline is evaluated on the full period, training period, and test
+period so Week 9 can do a fair multi-strategy comparison.
 
-Functions:
-    no_hedge_baseline()       — returns metrics for 0% hedge strategy
-    static_hedge_baseline()   — returns metrics for 50% hedge strategy
-    vecm_hedge_baseline()     — returns metrics for 88.24% hedge strategy
-    run_all_baselines()       — runs all three and prints comparison table
+Run from the project root:
+    python src/evaluation/baselines.py
 """
 
 import sys
+from pathlib import Path
+
+# Allow running directly from the project root: python src/evaluation/baselines.py
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "src")
-from evaluation.portfolio import compute_returns, apply_hedge, compute_portfolio_value
-from evaluation.metrics import summarise, print_summary
+from src.evaluation.portfolio import build_return_series, compute_portfolio_value
+from src.evaluation.metrics   import summarise, print_summary
 
+# ── Hedge ratio constants ─────────────────────────────────────────────────────
 
-# VECM optimal hedge ratio from Vasantha & Mallikarjunappa (2018)
-VECM_HEDGE_RATIO = 0.8824
+RATIO_NO_HEDGE    = 0.00
+RATIO_STATIC_50   = 0.50
 
-# Test period — used for evaluating out-of-sample performance
-TEST_START = "2025-01-01"
-TEST_END   = "2025-03-28"
+# Vasantha & Mallikarjunappa (2015) VECM-derived optimal hedge ratio.
+# Originally estimated for the Nifty index; applied here as a static
+# baseline for the stock portfolio hedge.
+RATIO_VECM        = 0.8824
 
+RISK_FREE_RATE    = 0.065   # India 91-day T-bill rate (annualised)
 
-def _make_constant_ratios(returns: pd.DataFrame, ratio: float) -> pd.Series:
-    """Create a constant hedge ratio series aligned to the returns index."""
-    return pd.Series(ratio, index=returns.index, name="hedge_ratio")
+# ── Baseline evaluation ───────────────────────────────────────────────────────
 
-
-def no_hedge_baseline(
-    returns: pd.DataFrame = None,
-    period: str = "full",
+def evaluate_baseline(
+    hedge_ratio: float,
+    label: str,
+    split: str = "full",
 ) -> dict:
     """
-    Baseline 1 — No hedge (hedge ratio = 0.0 throughout).
-    Equivalent to holding the Nifty 50 spot index with no futures position.
+    Evaluate a single constant hedge ratio strategy.
 
     Parameters
     ----------
-    returns : Pre-loaded returns DataFrame. If None, loads from data/raw/.
-    period  : 'full' (Jan 2021 - Mar 2025) or 'test' (Jan - Mar 2025).
+    hedge_ratio : the constant h applied throughout the period
+    label       : human-readable name for this strategy
+    split       : 'full' | 'train' | 'val' | 'test'
 
     Returns
     -------
-    dict of performance metrics.
+    dict containing label, hedge_ratio, split, metrics summary, and
+    the full return series.
     """
-    if returns is None:
-        returns = compute_returns()
-    if period == "test":
-        returns = returns[(returns.index >= TEST_START) & (returns.index <= TEST_END)]
+    returns = build_return_series(hedge_ratio=hedge_ratio, split=split)
 
-    hedge_ratios = _make_constant_ratios(returns, 0.0)
-    hedged_ret   = apply_hedge(returns, hedge_ratios)
-    return summarise(hedged_ret, hedge_ratios=hedge_ratios, label="No Hedge (ratio=0.00)")
+    # Hedged portfolio returns — this is what we evaluate
+    hedged_returns = returns["hedged"]
+
+    # Compute performance metrics
+    metrics = summarise(hedged_returns, risk_free_rate=RISK_FREE_RATE)
+
+    # Also compute unhedged and Nifty benchmark metrics for comparison
+    portfolio_metrics = summarise(
+        returns["portfolio"], risk_free_rate=RISK_FREE_RATE
+    )
+    nifty_metrics = summarise(
+        returns["nifty_spot"], risk_free_rate=RISK_FREE_RATE
+    )
+
+    return {
+        "label":              label,
+        "hedge_ratio":        hedge_ratio,
+        "split":              split,
+        "metrics":            metrics,
+        "portfolio_metrics":  portfolio_metrics,   # unhedged stock portfolio
+        "nifty_metrics":      nifty_metrics,        # Nifty benchmark (not hedged)
+        "returns":            returns,
+    }
 
 
-def static_hedge_baseline(
-    returns: pd.DataFrame = None,
-    period: str = "full",
-    ratio: float = 0.5,
-) -> dict:
+def run_all_baselines(split: str = "full") -> list:
     """
-    Baseline 2 — Static 50% hedge (hedge ratio = 0.5 throughout).
-    Represents a naive equal-split between hedged and unhedged exposure.
-
-    Parameters
-    ----------
-    returns : Pre-loaded returns DataFrame. If None, loads from data/raw/.
-    period  : 'full' or 'test'.
-    ratio   : Fixed hedge ratio (default 0.5).
-
-    Returns
-    -------
-    dict of performance metrics.
+    Run all three baselines and return a list of result dicts.
     """
-    if returns is None:
-        returns = compute_returns()
-    if period == "test":
-        returns = returns[(returns.index >= TEST_START) & (returns.index <= TEST_END)]
-
-    hedge_ratios = _make_constant_ratios(returns, ratio)
-    hedged_ret   = apply_hedge(returns, hedge_ratios)
-    label        = f"Static Hedge (ratio={ratio:.2f})"
-    return summarise(hedged_ret, hedge_ratios=hedge_ratios, label=label)
-
-
-def vecm_hedge_baseline(
-    returns: pd.DataFrame = None,
-    period: str = "full",
-) -> dict:
-    """
-    Baseline 3 — VECM optimal hedge (hedge ratio = 0.8824 throughout).
-    Uses the cointegration-based optimal hedge ratio from the literature
-    (Vasantha & Mallikarjunappa, 2018) as a constant — no dynamic adjustment.
-
-    This is the most important baseline since the Hedra system's dynamic
-    strategy should beat it by adjusting the ratio based on predicted risk.
-
-    Parameters
-    ----------
-    returns : Pre-loaded returns DataFrame. If None, loads from data/raw/.
-    period  : 'full' or 'test'.
-
-    Returns
-    -------
-    dict of performance metrics.
-    """
-    if returns is None:
-        returns = compute_returns()
-    if period == "test":
-        returns = returns[(returns.index >= TEST_START) & (returns.index <= TEST_END)]
-
-    hedge_ratios = _make_constant_ratios(returns, VECM_HEDGE_RATIO)
-    hedged_ret   = apply_hedge(returns, hedge_ratios)
-    return summarise(hedged_ret, hedge_ratios=hedge_ratios,
-                     label=f"VECM Hedge (ratio={VECM_HEDGE_RATIO})")
-
-
-def run_all_baselines(period: str = "full") -> pd.DataFrame:
-    """
-    Run all three baselines and return a comparison DataFrame.
-
-    Parameters
-    ----------
-    period : 'full' (Jan 2021 - Mar 2025) or 'test' (Jan - Mar 2025).
-
-    Returns
-    -------
-    DataFrame with one row per strategy and one column per metric.
-    """
-    returns = compute_returns()
-
-    results = [
-        no_hedge_baseline(returns, period),
-        static_hedge_baseline(returns, period),
-        vecm_hedge_baseline(returns, period),
-    ]
-
-    df = pd.DataFrame(results).set_index("label")
-    return df
-
-
-def print_comparison(period: str = "full") -> None:
-    """Print a formatted side-by-side comparison of all baselines."""
-    label = "Full Period (Jan 2021 – Mar 2025)" if period == "full" \
-            else "Test Period (Jan – Mar 2025)"
-
-    print(f"\n{'═' * 66}")
-    print(f"  Baseline Comparison — {label}")
-    print(f"{'═' * 66}")
-
-    returns = compute_returns()
-
     baselines = [
-        no_hedge_baseline(returns, period),
-        static_hedge_baseline(returns, period),
-        vecm_hedge_baseline(returns, period),
+        (RATIO_NO_HEDGE,  "Baseline 1: No Hedge"),
+        (RATIO_STATIC_50, "Baseline 2: Static 50% Hedge"),
+        (RATIO_VECM,      "Baseline 3: VECM Static Hedge (Vasantha & Mallikarjunappa)"),
     ]
 
-    for m in baselines:
-        print_summary(m)
+    results = []
+    for ratio, label in baselines:
+        result = evaluate_baseline(ratio, label, split=split)
+        results.append(result)
 
-    # Summary table
-    df = pd.DataFrame(baselines).set_index("label")
-    cols = ["total_return_pct", "annual_return_pct", "volatility_pct",
-            "sharpe", "sortino", "max_drawdown_pct", "cvar_95_pct"]
-    print(f"\n{'─' * 66}")
-    print("  Summary Table")
-    print(f"{'─' * 66}")
-    print(df[cols].to_string())
-    print(f"{'─' * 66}\n")
+    return results
 
+
+def print_baseline_comparison(results: list) -> None:
+    """
+    Print a side-by-side comparison of all baseline strategies.
+    """
+    print("\n" + "=" * 70)
+    print("BASELINE COMPARISON — 10-STOCK EQUAL-WEIGHT PORTFOLIO")
+    print("Hedging instrument: Nifty 50 futures")
+    print("Benchmark:          Nifty 50 spot index (not hedged)")
+    print("=" * 70)
+
+    for r in results:
+        print(f"\n{'─' * 70}")
+        print(f"  {r['label']}")
+        print(f"  Hedge ratio : {r['hedge_ratio']:.4f}  |  Period: {r['split']}")
+        print(f"{'─' * 70}")
+        print_summary(r["metrics"])
+
+    # Print unhedged portfolio and Nifty benchmark once (same for all baselines)
+    ref = results[0]
+    print(f"\n{'─' * 70}")
+    print("  REFERENCE: Unhedged stock portfolio")
+    print(f"{'─' * 70}")
+    print_summary(ref["portfolio_metrics"])
+
+    print(f"\n{'─' * 70}")
+    print("  BENCHMARK: Nifty 50 spot index (comparison only — not a position)")
+    print(f"{'─' * 70}")
+    print_summary(ref["nifty_metrics"])
+
+    print("\n" + "=" * 70)
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print_comparison(period="full")
-    print_comparison(period="test")
+    print("\nRunning baselines on FULL period (Jan 2021 – Mar 2025) ...")
+    full_results = run_all_baselines(split="full")
+    print_baseline_comparison(full_results)
+
+    print("\nRunning baselines on TEST period (Jan 2025 – Mar 2025) ...")
+    test_results = run_all_baselines(split="test")
+    print_baseline_comparison(test_results)
