@@ -1,25 +1,9 @@
 """
-build_features.py
-
 Assembles the full 25-dimensional feature vector from raw price data,
 technical indicators, OI features, GARCH volatility, and macroeconomic inputs.
-Generates risk labels from realised volatility tertiles fitted on training data.
-Applies StandardScaler fitted only on the training partition to prevent leakage.
+Generates risk labels from FUTURE 5-day realised volatility tertiles fitted
+on training data only.
 
-Outputs saved to data/processed/:
-    X_train.csv, X_val.csv, X_test.csv
-    y_train.csv, y_val.csv, y_test.csv
-    scaler.pkl
-    feature_names.txt
-    risk_label_thresholds.txt
-
-Split boundaries:
-    Training   : 2021-01-01 to 2024-09-30  (~930 rows)
-    Validation : 2024-10-01 to 2024-12-31  ( 62 rows)
-    Test       : 2025-01-01 to 2025-03-28  ( 62 rows)
-
-Run from the project root:
-    python src/features/build_features.py
 """
 
 import os
@@ -41,8 +25,10 @@ RAW_DIR        = "data/raw"
 EXTERNAL_DIR   = "data/external"
 PROCESSED_DIR  = "data/processed"
 
-TRAIN_END = "2024-09-30"
-VAL_END   = "2024-12-31"
+TRAIN_END    = "2024-09-30"
+VAL_END      = "2024-12-31"
+TRADING_DAYS = 252
+LABEL_HORIZON = 5   # number of future trading days used to compute future vol
 
 STOCK_SYMBOLS = [
     "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY",
@@ -68,7 +54,6 @@ def fit_garch(log_returns_train, log_returns_full):
     """
     print("  Fitting GARCH(1,1) on training data ...")
 
-    # arch_model expects returns scaled to percentage points for numerical stability
     train_returns = log_returns_train.dropna() * 100
 
     model  = arch_model(train_returns, vol="Garch", p=1, q=1,
@@ -82,51 +67,83 @@ def fit_garch(log_returns_train, log_returns_full):
     print(f"  GARCH params — omega={omega:.6f}  alpha={alpha:.4f}  beta={beta:.4f}")
     print(f"  Persistence (alpha+beta) = {alpha+beta:.4f}")
 
-    # Generate sigma for the full series using the fitted parameters
     full_returns = (log_returns_full * 100).fillna(0).values
     n            = len(full_returns)
     sigma2       = np.zeros(n)
-
-    # Initialise with unconditional variance from training fit
-    sigma2[0] = result.conditional_volatility.iloc[-1] ** 2
+    sigma2[0]    = result.conditional_volatility.iloc[-1] ** 2
 
     for t in range(1, n):
         sigma2[t] = omega + alpha * full_returns[t-1]**2 + beta * sigma2[t-1]
 
-    # Convert back from percentage-scaled to decimal, then to daily sigma
     sigma = np.sqrt(sigma2) / 100
     sigma_series       = pd.Series(sigma, index=log_returns_full.index,
                                    name="garch_sigma")
-    sigma_series.iloc[0] = np.nan  # first row has no prior return
+    sigma_series.iloc[0] = np.nan
     return sigma_series, result
 
 
-def make_risk_labels(realised_vol_train, realised_vol_full):
+def make_risk_labels(spot_close, feature_index, train_end, horizon=5):
     """
-    Generate three-class risk labels using tertiles fitted on training data only.
+    Generate three-class forward-looking risk labels.
 
-    low    (0) : bottom tertile of training volatility
-    medium (1) : middle tertile
-    high   (2) : top tertile
+    The label on day t = volatility regime over the NEXT `horizon` trading days.
 
-    Thresholds are fitted on training data and applied to val/test to prevent
-    any information leakage from future volatility regimes.
+    Steps:
+        1. Compute daily log returns from spot close prices.
+        2. Compute rolling `horizon`-day realised volatility (annualised).
+        3. Shift backward by `horizon` so that day t gets the volatility
+           of the window starting at t+1.
+        4. Fit tertile thresholds on the training portion only.
+        5. Assign labels 0/1/2 to the full aligned series.
+        6. Return NaN for the last `horizon` rows (no future window available).
+
+    Parameters
+    ----------
+    spot_close   : pd.Series — Nifty 50 spot close prices (full date range)
+    feature_index: pd.Index  — index of the assembled feature matrix
+    train_end    : str       — last date of training period
+    horizon      : int       — number of future days defining the label window
+
+    Returns
+    -------
+    labels : pd.Series (Int64) aligned to feature_index, NaN for last `horizon` rows
+    q33    : float — low/medium threshold
+    q67    : float — medium/high threshold
     """
-    train_clean = realised_vol_train.dropna()
-    q33 = train_clean.quantile(1/3)
-    q67 = train_clean.quantile(2/3)
+    # Step 1: daily log returns from spot
+    spot_ret = np.log(spot_close / spot_close.shift(1))
 
-    print(f"  Risk label thresholds (training tertiles):")
-    print(f"    Low    : vol < {q33:.4f}")
-    print(f"    Medium : {q33:.4f} <= vol < {q67:.4f}")
-    print(f"    High   : vol >= {q67:.4f}")
+    # Step 2: rolling horizon-day volatility (annualised)
+    # At day t this is the std of returns from t-horizon+1 to t
+    rolling_vol = spot_ret.rolling(horizon).std() * np.sqrt(TRADING_DAYS)
 
+    # Step 3: shift -horizon so day t holds volatility of t+1 to t+horizon
+    # After shift(-horizon), position t = what was at position t+horizon
+    future_vol = rolling_vol.shift(-horizon)
+
+    # Step 4: align to the feature matrix index
+    future_vol = future_vol.reindex(feature_index)
+
+    # Step 5: fit thresholds on training data only (exclude NaN tail)
+    train_mask   = feature_index <= train_end
+    train_future = future_vol[train_mask].dropna()
+
+    q33 = train_future.quantile(1/3)
+    q67 = train_future.quantile(2/3)
+
+    print(f"  Forward-looking risk label thresholds (training tertiles, {horizon}-day horizon):")
+    print(f"    Low    : future_vol < {q33:.4f}  ({q33*100:.2f}% annualised)")
+    print(f"    Medium : {q33:.4f} <= future_vol < {q67:.4f}")
+    print(f"    High   : future_vol >= {q67:.4f}  ({q67*100:.2f}% annualised)")
+
+    # Step 6: assign labels
     labels = pd.cut(
-        realised_vol_full,
+        future_vol,
         bins=[-np.inf, q33, q67, np.inf],
         labels=[0, 1, 2],
     ).astype("Int64")
     labels.name = "risk_label"
+
     return labels, q33, q67
 
 
@@ -153,25 +170,25 @@ if __name__ == "__main__":
     # ── Technical indicators on spot ──────────────────────────────────────────
     print("\nComputing technical indicators ...")
 
-    rsi14              = rsi(spot["close"], period=14)
-    macd_line, macd_sig, _ = macd(spot["close"], fast=12, slow=26, signal=9)
-    vwap20             = vwap(spot["high"], spot["low"],
-                              spot["close"], fut["volume"])
-    atr14              = atr(spot["high"], spot["low"], spot["close"], period=14)
-    sma_cross          = sma_crossover(spot["close"], fast=10, slow=20)
+    rsi14                    = rsi(spot["close"], period=14)
+    macd_line, macd_sig, _   = macd(spot["close"], fast=12, slow=26, signal=9)
+    vwap20                   = vwap(spot["high"], spot["low"],
+                                    spot["close"], fut["volume"])
+    atr14                    = atr(spot["high"], spot["low"], spot["close"], period=14)
+    sma_cross                = sma_crossover(spot["close"], fast=10, slow=20)
 
     # ── OI features from futures ──────────────────────────────────────────────
-    oi_pct             = oi_pct_change(fut["oi"], period=1)
-    oi_ratio           = oi_volume_ratio(fut["oi"], fut["volume"])
-    oi_ma20            = oi_moving_average(fut["oi"], window=20)
+    oi_pct   = oi_pct_change(fut["oi"], period=1)
+    oi_ratio = oi_volume_ratio(fut["oi"], fut["volume"])
+    oi_ma20  = oi_moving_average(fut["oi"], window=20)
 
     # ── Volatility ────────────────────────────────────────────────────────────
-    realised_vol       = rolling_volatility(spot["close"], window=20)
-    spot_log_ret       = log_return(spot["close"])
+    realised_vol = rolling_volatility(spot["close"], window=20)
+    spot_log_ret = log_return(spot["close"])
 
     # ── GARCH(1,1) ────────────────────────────────────────────────────────────
     print("\nFitting GARCH(1,1) ...")
-    train_mask         = spot_log_ret.index <= TRAIN_END
+    train_mask = spot_log_ret.index <= TRAIN_END
     garch_sigma, garch_result = fit_garch(
         spot_log_ret[train_mask],
         spot_log_ret,
@@ -195,39 +212,41 @@ if __name__ == "__main__":
     feature_df["oi_vol_ratio"]    = oi_ratio
     feature_df["oi_ma_20"]        = oi_ma20
 
-    # Group 3 — Volatility
+    # Group 3 — Volatility (realised_vol_20 and garch_sigma are FEATURES,
+    # not the label basis — the forward-looking label is computed separately)
     feature_df["realised_vol_20"] = realised_vol
     feature_df["garch_sigma"]     = garch_sigma
 
-    # Group 4 — Macro (aligned already)
-    feature_df["gold_usd"]        = macro["gold_usd"]
-    feature_df["brent_usd"]       = macro["brent_usd"]
-    feature_df["usdinr"]          = macro["usdinr"]
-    feature_df["india_10y"]       = macro["india_10y"]
+    # Group 4 — Macro
+    feature_df["gold_usd"]   = macro["gold_usd"]
+    feature_df["brent_usd"]  = macro["brent_usd"]
+    feature_df["usdinr"]     = macro["usdinr"]
+    feature_df["india_10y"]  = macro["india_10y"]
 
     # Group 5 — Stock log returns
     for sym in STOCK_SYMBOLS:
         feature_df[f"ret_{sym}"] = stock_returns[sym]
 
     print(f"  Feature matrix shape before dropna: {feature_df.shape}")
-    print(f"  NaNs per column:\n{feature_df.isna().sum()[feature_df.isna().sum() > 0]}")
-
-    # Drop warmup rows — all NaNs introduced by the longest rolling window (26 for MACD slow EMA)
-    # We use dropna to remove any row with any NaN across all 25 features
     feature_df = feature_df.dropna()
     print(f"  Feature matrix shape after dropna : {feature_df.shape}")
 
-    # ── Risk labels ───────────────────────────────────────────────────────────
-    print("\nGenerating risk labels ...")
-    train_vol_mask = (feature_df.index <= TRAIN_END)
+    # ── Forward-looking risk labels ───────────────────────────────────────────
+    # Labels are based on FUTURE volatility — not same-day realised_vol_20.
+    # This prevents target leakage: realised_vol_20 remains an input feature,
+    # but the label represents the regime the model must predict ahead of time.
+    print("\nGenerating forward-looking risk labels ...")
     labels, q33, q67 = make_risk_labels(
-        feature_df.loc[train_vol_mask, "realised_vol_20"],
-        feature_df["realised_vol_20"],
+        spot_close    = spot["close"],
+        feature_index = feature_df.index,
+        train_end     = TRAIN_END,
+        horizon       = LABEL_HORIZON,
     )
     feature_df["risk_label"] = labels
 
-    # Drop any remaining NaN labels (shouldn't occur after dropna but safety check)
+    # Drop last LABEL_HORIZON rows where future label is unavailable
     feature_df = feature_df.dropna(subset=["risk_label"])
+    print(f"  Rows after dropping NaN-label tail : {len(feature_df)}")
     print(f"  Label distribution:\n{feature_df['risk_label'].value_counts().sort_index()}")
 
     # ── Train / val / test split ──────────────────────────────────────────────
@@ -250,10 +269,8 @@ if __name__ == "__main__":
     y_test  = test_df["risk_label"]
 
     # ── Scale features ────────────────────────────────────────────────────────
-    # Scaler is fit only on training data — applying it to val/test
-    # prevents any leakage of future distribution statistics.
     print("\nFitting StandardScaler on training data only ...")
-    scaler  = StandardScaler()
+    scaler = StandardScaler()
     X_train_scaled = pd.DataFrame(
         scaler.fit_transform(X_train),
         index=X_train.index, columns=feature_cols,
@@ -271,11 +288,11 @@ if __name__ == "__main__":
     print("\nSaving to data/processed/ ...")
 
     X_train_scaled.to_csv(os.path.join(PROCESSED_DIR, "X_train.csv"))
-    X_val_scaled.to_csv(os.path.join(PROCESSED_DIR, "X_val.csv"))
-    X_test_scaled.to_csv(os.path.join(PROCESSED_DIR, "X_test.csv"))
+    X_val_scaled.to_csv(os.path.join(PROCESSED_DIR,   "X_val.csv"))
+    X_test_scaled.to_csv(os.path.join(PROCESSED_DIR,  "X_test.csv"))
     y_train.to_csv(os.path.join(PROCESSED_DIR, "y_train.csv"))
-    y_val.to_csv(os.path.join(PROCESSED_DIR, "y_val.csv"))
-    y_test.to_csv(os.path.join(PROCESSED_DIR, "y_test.csv"))
+    y_val.to_csv(os.path.join(PROCESSED_DIR,   "y_val.csv"))
+    y_test.to_csv(os.path.join(PROCESSED_DIR,  "y_test.csv"))
 
     with open(os.path.join(PROCESSED_DIR, "scaler.pkl"), "wb") as f:
         pickle.dump(scaler, f)
@@ -284,16 +301,19 @@ if __name__ == "__main__":
         f.write("\n".join(feature_cols))
 
     with open(os.path.join(PROCESSED_DIR, "risk_label_thresholds.txt"), "w") as f:
-        f.write(f"low_threshold  = {q33:.6f}\n")
-        f.write(f"high_threshold = {q67:.6f}\n")
+        f.write(f"label_horizon  = {LABEL_HORIZON} trading days\n")
+        f.write(f"low_threshold  = {q33:.6f}  (annualised vol)\n")
+        f.write(f"high_threshold = {q67:.6f}  (annualised vol)\n")
         f.write("low=0  medium=1  high=2\n")
+        f.write("\nNote: labels represent FUTURE volatility regime, not same-day.\n")
+        f.write("realised_vol_20 and garch_sigma are retained as input features.\n")
 
     print(f"\n  X_train : {X_train_scaled.shape}")
     print(f"  X_val   : {X_val_scaled.shape}")
     print(f"  X_test  : {X_test_scaled.shape}")
-    print(f"  y_train : {y_train.shape}  labels: {sorted(y_train.unique())}")
-    print(f"  y_val   : {y_val.shape}  labels: {sorted(y_val.unique())}")
-    print(f"  y_test  : {y_test.shape}  labels: {sorted(y_test.unique())}")
+    print(f"  y_train : {y_train.shape}  labels: {sorted(y_train.dropna().unique())}")
+    print(f"  y_val   : {y_val.shape}  labels: {sorted(y_val.dropna().unique())}")
+    print(f"  y_test  : {y_test.shape}  labels: {sorted(y_test.dropna().unique())}")
     print(f"\n  Features ({len(feature_cols)}):")
     for i, name in enumerate(feature_cols, 1):
         print(f"    {i:2d}. {name}")
