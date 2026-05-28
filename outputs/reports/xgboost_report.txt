@@ -1,0 +1,28 @@
+XGBoost Results
+============================================================
+
+Validation accuracy: 0.2764
+Test accuracy      : 0.3301
+
+Validation classification report:
+              precision    recall  f1-score   support
+
+         Low     0.6923    0.1065    0.1846       169
+      Medium     0.2753    0.6622    0.3889        74
+        High     0.0238    0.3333    0.0444         3
+
+    accuracy                         0.2764       246
+   macro avg     0.3305    0.3673    0.2060       246
+weighted avg     0.5587    0.2764    0.2444       246
+
+
+Test classification report:
+              precision    recall  f1-score   support
+
+         Low     0.4483    0.0985    0.1615       132
+      Medium     0.4510    0.5111    0.4792       135
+        High     0.1532    0.4872    0.2331        39
+
+    accuracy                         0.3301       306
+   macro avg     0.3508    0.3656    0.2913       306
+weighted avg     0.4119    0.3301    0.3108       306

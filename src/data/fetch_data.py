@@ -1,22 +1,8 @@
-"""
-fetch_data.py
-
-Fetches historical OHLCV and open interest data from Kite Connect for the
-Nifty 50 spot index, Nifty continuous futures, and ten Nifty 50 constituent
-stocks. All data is saved as CSV files in data/raw/.
-
-Training period  : January 2021 to September 2024
-Validation period: October 2024 to December 2024
-Test period      : January 2025 to March 2025
-
-Run from the project root:
-    python src/data/fetch_data.py
-"""
+# extended version — 2018-01-01 to 2025-03-28
 
 import os
 import time
-from datetime import date
-
+import datetime
 import pandas as pd
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect
@@ -25,149 +11,137 @@ load_dotenv()
 
 API_KEY      = os.getenv("KITE_API_KEY")
 ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN")
+RAW_DIR      = "data/raw"
 
-if not API_KEY or not ACCESS_TOKEN:
-    raise ValueError("KITE_API_KEY or KITE_ACCESS_TOKEN not found in .env file.")
+FROM_DATE = datetime.date(2018, 1, 1)
+TO_DATE   = datetime.date(2025, 3, 28)
 
-FROM_DATE    = date(2021, 1, 1)
-TO_DATE      = date(2025, 3, 31)
-RAW_DATA_DIR = "data/raw"
+FUTURES_CONTINUOUS_FROM = datetime.date(2021, 1, 1)
+NIFTY_CONTINUOUS_TOKEN  = 16914178
+NIFTY_SPOT_TOKEN        = 256265
 
-# Portfolio chosen to represent a diversified cross-section of Nifty 50 sectors:
-# financials (HDFC, ICICI, SBI, AXIS), technology (INFY, TCS), energy (RELIANCE),
-# industrials (LT), telecom (BHARTIARTL), and FMCG (ITC).
-STOCK_INSTRUMENTS = [
-    ("NSE", "NIFTY 50",   "NIFTY50_spot"),
-    ("NSE", "RELIANCE",   "RELIANCE"),
-    ("NSE", "HDFCBANK",   "HDFCBANK"),
-    ("NSE", "ICICIBANK",  "ICICIBANK"),
-    ("NSE", "INFY",       "INFY"),
-    ("NSE", "TCS",        "TCS"),
-    ("NSE", "SBIN",       "SBIN"),
-    ("NSE", "LT",         "LT"),
-    ("NSE", "BHARTIARTL", "BHARTIARTL"),
-    ("NSE", "ITC",        "ITC"),
-    ("NSE", "AXISBANK",   "AXISBANK"),
-]
+STOCK_TOKENS = {
+    "RELIANCE":   738561,
+    "HDFCBANK":   341249,
+    "ICICIBANK":  1270529,
+    "INFY":       408065,
+    "TCS":        2953217,
+    "SBIN":       779521,
+    "LT":         2939649,
+    "BHARTIARTL": 2714625,
+    "ITC":        424961,
+    "AXISBANK":   1510401,
+}
 
-# Instrument token for the current Nifty front-month futures contract.
-# Confirmed from check_symbols.py — NIFTY26MAYFUT token=16914178.
-# Kite's continuous=True flag stitches all expired contracts automatically
-# when fetching historical data, so no manual rolling is needed.
-NIFTY_CONTINUOUS_TOKEN = 16914178
+os.makedirs(RAW_DIR, exist_ok=True)
 
 
-def get_instrument_token(kite, exchange, tradingsymbol):
-    """Return the numeric instrument token for a given exchange and symbol."""
-    instruments = kite.instruments(exchange)
-    for inst in instruments:
-        if inst["tradingsymbol"] == tradingsymbol:
-            return inst["instrument_token"]
-    return None
+def fetch_ohlcv(kite, token, from_date, to_date, label, oi=False):
+    """Fetch daily OHLCV in 365-day chunks. Returns a clean DataFrame."""
+    all_rows = []
+    chunk_start = from_date
+
+    while chunk_start <= to_date:
+        chunk_end = min(
+            chunk_start + datetime.timedelta(days=364),
+            to_date,
+        )
+        try:
+            data = kite.historical_data(token, chunk_start, chunk_end, "day", oi=oi)
+            all_rows.extend(data)
+            print(f"    {chunk_start} to {chunk_end}: {len(data)} rows")
+        except Exception as e:
+            print(f"    {chunk_start} to {chunk_end}: ERROR — {e}")
+
+        chunk_start = chunk_end + datetime.timedelta(days=1)
+        time.sleep(0.35)
+
+    if not all_rows:
+        return None
+
+    df = pd.DataFrame(all_rows)
+    # Strip timezone so all dates are tz-naive for consistent comparison
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.normalize()
+    df = df.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+
+    if "oi" not in df.columns:
+        df["oi"] = 0
+
+    return df[["date", "open", "high", "low", "close", "volume", "oi"]]
 
 
-def fetch_historical(kite, instrument_token, from_date, to_date,
-                     oi=False, continuous=False):
+def build_futures_series(kite, spot_df):
     """
-    Fetch daily OHLCV data from Kite Connect.
-    oi=True includes open interest — only meaningful for futures.
-    continuous=True stitches expired contracts into one unbroken series,
-    which is how we get full historical futures data without needing
-    individual expiry tokens.
+    Build a continuous futures series for the full date range.
+    2018-2020: spot proxy (OI=0)
+    2021-2025: actual continuous futures token
     """
-    data = kite.historical_data(
-        instrument_token=instrument_token,
-        from_date=from_date,
-        to_date=to_date,
-        interval="day",
-        continuous=continuous,
-        oi=oi,
-    )
-    df = pd.DataFrame(data)
-    if df.empty:
-        return df
-    df["date"] = pd.to_datetime(df["date"]).dt.date
-    df = df.sort_values("date").reset_index(drop=True)
-    return df
+    print("\n  Building futures series ...")
 
+    cutoff = pd.Timestamp(FUTURES_CONTINUOUS_FROM)  # tz-naive Timestamp
 
-def save_csv(df, name):
-    """Save a DataFrame to data/raw/<name>.csv."""
-    os.makedirs(RAW_DATA_DIR, exist_ok=True)
-    path = os.path.join(RAW_DATA_DIR, f"{name}.csv")
-    df.to_csv(path, index=False)
-    print(f"  Saved {path} ({len(df)} rows)")
+    # Proxy segment — spot data before 2021
+    proxy_df = spot_df[spot_df["date"] < cutoff].copy()
+    proxy_df["oi"] = 0
+    print(f"    Proxy segment (spot): {len(proxy_df)} rows "
+          f"({proxy_df['date'].min().date()} to {proxy_df['date'].max().date()})")
 
-
-def fetch_spot_and_stocks(kite):
-    """Fetch Nifty 50 spot index and ten constituent stocks."""
-    print("\nFetching spot index and stocks ...")
-    for exchange, symbol, name in STOCK_INSTRUMENTS:
-        print(f"  {symbol}", end=" ... ")
-        token = get_instrument_token(kite, exchange, symbol)
-        if token is None:
-            print("WARNING: symbol not found, skipping.")
-            continue
-        df = fetch_historical(kite, token, FROM_DATE, TO_DATE, oi=False)
-        if df.empty:
-            print("WARNING: no data returned, skipping.")
-            continue
-        save_csv(df, name)
-        time.sleep(0.4)  # Kite rate limit is ~3 requests/sec
-
-
-def fetch_nifty_futures_continuous(kite):
-    """
-    Fetch a full continuous Nifty futures series using Kite's continuous
-    data feature. Passing continuous=True with the current front-month token
-    causes Kite to automatically stitch all expired contracts into one
-    unbroken daily series going back several years, including OI data.
-    This avoids the need to fetch and stitch individual monthly expiries.
-    """
-    print("\nFetching Nifty futures (continuous) ...")
-
-    df = fetch_historical(
-        kite,
-        instrument_token=NIFTY_CONTINUOUS_TOKEN,
-        from_date=FROM_DATE,
-        to_date=TO_DATE,
+    # Actual futures segment — 2021 onwards
+    print(f"    Fetching continuous futures from {FUTURES_CONTINUOUS_FROM} ...")
+    fut_df = fetch_ohlcv(
+        kite, NIFTY_CONTINUOUS_TOKEN,
+        FUTURES_CONTINUOUS_FROM, TO_DATE,
+        label="NIFTY_futures_continuous",
         oi=True,
-        continuous=True,
     )
 
-    if df.empty:
-        print("ERROR: no data returned.")
-        return
+    if fut_df is None:
+        print("    WARNING: Could not fetch futures. Using full spot proxy.")
+        full_proxy = spot_df.copy()
+        full_proxy["oi"] = 0
+        return full_proxy
 
-    save_csv(df, "NIFTY_futures_continuous")
-    print(f"  Date range : {df['date'].min()} to {df['date'].max()}")
-    print(f"  Columns    : {list(df.columns)}")
+    print(f"    Futures segment: {len(fut_df)} rows "
+          f"({fut_df['date'].min().date()} to {fut_df['date'].max().date()})")
 
-
-def run_sanity_check():
-    """Print shape and boundary rows for every CSV in data/raw/."""
-    print("\nSanity check ...")
-    for f in sorted(os.listdir(RAW_DATA_DIR)):
-        if not f.endswith(".csv"):
-            continue
-        path = os.path.join(RAW_DATA_DIR, f)
-        df = pd.read_csv(path)
-        print(f"\n  {f}")
-        print(f"    Shape : {df.shape}")
-        print(f"    Cols  : {list(df.columns)}")
-        print(f"    First : {df.iloc[0].to_dict()}")
-        print(f"    Last  : {df.iloc[-1].to_dict()}")
+    combined = pd.concat([proxy_df, fut_df], ignore_index=True)
+    combined = combined.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+    print(f"    Combined futures series: {len(combined)} rows")
+    return combined
 
 
 if __name__ == "__main__":
-    print("Connecting to Kite Connect ...")
+    print("Connecting to Kite ...")
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
-    profile = kite.profile()
-    print(f"Connected as: {profile['user_name']} ({profile['email']})")
 
-    fetch_spot_and_stocks(kite)
-    fetch_nifty_futures_continuous(kite)
-    run_sanity_check()
+    # ── Nifty spot ────────────────────────────────────────────────────────────
+    print(f"\nFetching NIFTY50_spot ({FROM_DATE} to {TO_DATE}) ...")
+    spot_df = fetch_ohlcv(kite, NIFTY_SPOT_TOKEN, FROM_DATE, TO_DATE,
+                          label="NIFTY50_spot", oi=False)
+    if spot_df is not None:
+        path = os.path.join(RAW_DIR, "NIFTY50_spot.csv")
+        spot_df.to_csv(path, index=False)
+        print(f"  Saved: {path}  ({len(spot_df)} rows)")
 
-    print("\nAll raw data saved to data/raw/")
+    # ── Futures (proxy + continuous) ──────────────────────────────────────────
+    print(f"\nBuilding NIFTY_futures_continuous ...")
+    fut_df = build_futures_series(kite, spot_df)
+    if fut_df is not None:
+        path = os.path.join(RAW_DIR, "NIFTY_futures_continuous.csv")
+        fut_df.to_csv(path, index=False)
+        print(f"  Saved: {path}  ({len(fut_df)} rows)")
+
+    # ── Stocks ────────────────────────────────────────────────────────────────
+    for symbol, token in STOCK_TOKENS.items():
+        print(f"\nFetching {symbol} ...")
+        df = fetch_ohlcv(kite, token, FROM_DATE, TO_DATE, label=symbol, oi=False)
+        if df is not None:
+            path = os.path.join(RAW_DIR, f"{symbol}.csv")
+            df.to_csv(path, index=False)
+            print(f"  Saved: {path}  ({len(df)} rows)")
+        time.sleep(0.5)
+
+    print("\nKite data fetch complete.")
+    print(f"All files saved to {RAW_DIR}/")
+    print("\nNext: run fetch_macro_extended.py to update macro data")

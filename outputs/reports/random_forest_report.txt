@@ -1,0 +1,28 @@
+Random Forest Results
+============================================================
+
+Validation accuracy: 0.3089
+Test accuracy      : 0.3693
+
+Validation classification report:
+              precision    recall  f1-score   support
+
+         Low     0.6512    0.1657    0.2642       169
+      Medium     0.2652    0.6486    0.3765        74
+        High     0.0000    0.0000    0.0000         3
+
+    accuracy                         0.3089       246
+   macro avg     0.3055    0.2714    0.2135       246
+weighted avg     0.5271    0.3089    0.2947       246
+
+
+Test classification report:
+              precision    recall  f1-score   support
+
+         Low     0.5224    0.2652    0.3518       132
+      Medium     0.4692    0.4519    0.4604       135
+        High     0.1560    0.4359    0.2297        39
+
+    accuracy                         0.3693       306
+   macro avg     0.3825    0.3843    0.3473       306
+weighted avg     0.4522    0.3693    0.3841       306

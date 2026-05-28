@@ -1,0 +1,36 @@
+============================================================
+LSTM RISK CLASSIFIER — EVALUATION REPORT
+============================================================
+
+Architecture : 2x LSTM(64) + Dense(32) + Softmax(3)
+Sequence len : 20 trading days
+Features     : 25
+Epochs run   : 23
+
+Validation accuracy : 0.5894
+Test accuracy       : 0.4281
+
+VALIDATION SET
+----------------------------------------
+              precision    recall  f1-score   support
+
+         Low       0.67      0.80      0.73       169
+      Medium       0.23      0.12      0.16        74
+        High       0.00      0.00      0.00         3
+
+    accuracy                           0.59       246
+   macro avg       0.30      0.31      0.30       246
+weighted avg       0.53      0.59      0.55       246
+
+TEST SET
+----------------------------------------
+              precision    recall  f1-score   support
+
+         Low       0.44      0.27      0.33       132
+      Medium       0.46      0.68      0.55       135
+        High       0.16      0.10      0.12        39
+
+    accuracy                           0.43       306
+   macro avg       0.35      0.35      0.33       306
+weighted avg       0.41      0.43      0.40       306
+
