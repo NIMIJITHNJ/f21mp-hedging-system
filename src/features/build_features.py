@@ -1,38 +1,10 @@
 """
-build_features.py
 
 Assembles the full 25-dimensional feature vector from raw price data,
 technical indicators, OI features, GARCH volatility, and macroeconomic inputs.
 Generates risk labels from FUTURE 5-day realised volatility tertiles fitted
 on training data only.
 
-Label design:
-    The label on day t = volatility regime over the NEXT 5 trading days
-    (t+1 to t+5), computed from Nifty 50 spot returns. This ensures the
-    LSTM predicts future risk, not same-day risk (which would cause leakage
-    since realised_vol_20 is also a feature). Thresholds are fitted on
-    training data only.
-
-Data note:
-    Nifty continuous futures fetched using token 15956226 with continuous=True.
-    OI is available from 2019 onwards; 2018 Q1 OI is zero (documented limitation).
-    Infinity values in OI-ratio features (from zero-volume days) are replaced
-    with 0 before scaling.
-
-Split boundaries:
-    Training   : 2018-01-01 to 2023-12-31  (~1,224 rows)
-    Validation : 2024-01-01 to 2024-09-30  (~187 rows)
-    Test       : 2024-10-01 to 2025-03-28  (~119 rows)
-
-Outputs saved to data/processed/:
-    X_train.csv, X_val.csv, X_test.csv
-    y_train.csv, y_val.csv, y_test.csv
-    scaler.pkl
-    feature_names.txt
-    risk_label_thresholds.txt
-
-Run from the project root:
-    python src/features/build_features.py
 """
 
 import os
@@ -171,11 +143,12 @@ if __name__ == "__main__":
     sma_cross              = sma_crossover(spot["close"], fast=10, slow=20)
 
     # ── OI features ───────────────────────────────────────────────────────────
-    # OI is available from 2019 onwards; 2018 Q1 has zero OI.
-    # pct_change and ratio on zero OI produce NaN/inf — handled below.
-    oi_pct   = oi_pct_change(fut["oi"], period=1)
-    oi_ratio = oi_volume_ratio(fut["oi"], fut["volume"])
-    oi_ma20  = oi_moving_average(fut["oi"], window=20)
+    # OI is only available from 2019 onwards with continuous=True token.
+    # For 2012-2018, OI is zero — pct_change and ratio produce NaN/inf.
+    # Fill with 0 to retain those rows rather than dropping them.
+    oi_pct   = oi_pct_change(fut["oi"], period=1).fillna(0)
+    oi_ratio = oi_volume_ratio(fut["oi"], fut["volume"]).fillna(0)
+    oi_ma20  = oi_moving_average(fut["oi"], window=20).fillna(0)
 
     # ── Volatility ────────────────────────────────────────────────────────────
     realised_vol = rolling_volatility(spot["close"], window=20)

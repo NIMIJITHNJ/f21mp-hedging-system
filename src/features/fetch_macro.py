@@ -1,165 +1,131 @@
-"""
-fetch_macro.py
 
-Fetches macroeconomic time series and saves them to data/external/.
-These series are used as additional input features in the LSTM-GARCH model.
-
-Sources:
-    - Gold price in USD        : yfinance (GC=F)
-    - Brent crude in USD       : yfinance (BZ=F)
-    - USD/INR exchange rate    : yfinance (INR=X)
-    - India 10Y bond yield (%) : investing.com CSV download
-                                 (place at data/external/raw_india_10y.csv)
-
-All series are aligned to the 557 NSE trading days (2023-01-02 to 2025-03-28)
-using forward-fill for any calendar gaps.
-
-Run from the project root:
-    python src/features/fetch_macro.py
-"""
+# Updates macro_combined.csv to cover 2018-01-01 to 2025-03-28.
 
 import os
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
-EXTERNAL_DIR  = "data/external"
-FROM_DATE     = "2021-01-01"
-TO_DATE       = "2025-03-31"
-REFERENCE_CSV = "data/raw/NIFTY50_spot.csv"
+EXTERNAL_DIR = "data/external"
+RAW_DIR      = "data/raw"
 
-# Path where the investing.com bond yield CSV should be placed.
-# Download from: https://in.investing.com/rates-bonds/india-10-year-bond-yield-historical-data
-BOND_YIELD_CSV = "data/external/raw_india_10y.csv"
+FROM_DATE = "2012-01-01"
+TO_DATE   = "2026-03-31"
 
-YFINANCE_SERIES = [
-    ("GC=F",  "gold_usd",  "Gold price (USD/oz)"),
-    ("BZ=F",  "brent_usd", "Brent crude (USD/barrel)"),
-    ("INR=X", "usdinr",    "USD/INR exchange rate"),
-]
+os.makedirs(EXTERNAL_DIR, exist_ok=True)
 
 
-def fetch_yfinance_series(ticker, name, description):
-    """Download a single yfinance series and return a named Series by date."""
-    print(f"  Fetching {description} ({ticker}) ...", end=" ")
+def fetch_yfinance(ticker, col_name, from_date, to_date):
+    """Fetch daily close from yfinance, return a named Series."""
+    print(f"  Fetching {ticker} ...")
     try:
-        raw = yf.download(
-            ticker,
-            start=FROM_DATE,
-            end=TO_DATE,
-            interval="1d",
-            progress=False,
-            auto_adjust=True,
-        )
-        if raw.empty:
-            print("WARNING: no data returned.")
+        df = yf.download(ticker, start=from_date, end=to_date,
+                         auto_adjust=True, progress=False)
+        if df.empty:
+            print(f"    WARNING: No data returned for {ticker}")
             return None
-
-        close = raw["Close"][ticker] if isinstance(raw.columns, pd.MultiIndex) \
-                else raw["Close"]
-
-        close.index = pd.to_datetime(close.index).normalize()
-        close.name  = name
-        print(f"{len(close)} rows")
-        return close
-
+        series = df["Close"].squeeze()
+        series.index = pd.to_datetime(series.index).tz_localize(None).normalize()
+        series.name = col_name
+        print(f"    OK — {len(series)} rows "
+              f"({series.index[0].date()} to {series.index[-1].date()})")
+        return series
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(f"    ERROR: {e}")
         return None
 
 
-def load_bond_yield(path):
+def load_bond_yield():
     """
-    Parse the investing.com India 10Y bond yield CSV.
-    The file uses DD-MM-YYYY date format and a 'Price' column for the yield.
+    Load India 10Y bond yield from the existing CSV.
+    Extends backward if needed by forward-filling from the earliest value.
     """
-    print(f"  Loading India 10Y bond yield from {path} ...", end=" ")
-    if not os.path.exists(path):
-        print(f"WARNING: file not found at {path}")
-        return None
+    bond_path = os.path.join(EXTERNAL_DIR, "raw_india_10y.csv")
+    if not os.path.exists(bond_path):
+        print("  WARNING: India 10Y bond CSV not found. Using constant 6.5%.")
+        idx = pd.date_range(FROM_DATE, TO_DATE, freq="B")
+        return pd.Series(6.5 / 100, index=idx, name="india_10y")
 
-    df = pd.read_csv(path, encoding="utf-8-sig")
-    df["Date"]  = pd.to_datetime(df["Date"], format="%d-%m-%Y")
-    df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
-    df = df.sort_values("Date").set_index("Date")
+    print(f"  Loading India 10Y bond from CSV ...")
+    df = pd.read_csv(bond_path)
 
-    series       = df["Price"].rename("india_10y")
-    series.index = pd.DatetimeIndex(series.index).normalize()
-    print(f"{len(series)} rows  ({series.index[0].date()} to {series.index[-1].date()})")
+    # Handle different column name formats
+    date_col  = [c for c in df.columns if "date" in c.lower() or "Date" in c][0]
+    price_col = [c for c in df.columns if "price" in c.lower() or "Price" in c or "%" in c][0]
+
+    df[date_col]  = pd.to_datetime(df[date_col], dayfirst=True)
+    df[price_col] = pd.to_numeric(
+        df[price_col].astype(str).str.replace("%", "").str.replace(",", ""),
+        errors="coerce"
+    ) / 100   # convert % to decimal
+
+    series = df.set_index(date_col)[price_col].sort_index()
+    series.index = series.index.tz_localize(None).normalize()
+    series.name = "india_10y"
+
+    earliest_date = series.index.min()
+    print(f"    Bond data range: {earliest_date.date()} to {series.index.max().date()}")
+
+    # If bond data starts after 2018, backfill with earliest available value
+    target_start = pd.Timestamp(FROM_DATE)
+    if earliest_date > target_start:
+        print(f"    Bond data starts at {earliest_date.date()} — "
+              f"backfilling to {FROM_DATE} with value {series.iloc[0]:.4f}")
+        backfill_idx = pd.date_range(FROM_DATE, earliest_date - pd.Timedelta(days=1), freq="B")
+        backfill     = pd.Series(series.iloc[0], index=backfill_idx, name="india_10y")
+        series       = pd.concat([backfill, series]).sort_index()
+
     return series
 
 
-def align_to_reference(series_dict, reference_dates):
-    """
-    Reindex all macro series to the NSE trading calendar.
-    Forward-fill gaps then back-fill any leading NaNs.
-    """
-    ref_idx = pd.DatetimeIndex(reference_dates)
-    aligned = {}
-    for name, series in series_dict.items():
-        reindexed = (
-            series
-            .reindex(ref_idx.union(series.index))
-            .sort_index()
-            .ffill()
-            .bfill()
-            .reindex(ref_idx)
-        )
-        aligned[name] = reindexed
-    return aligned
-
-
-def save_csv(df, name):
-    os.makedirs(EXTERNAL_DIR, exist_ok=True)
-    path = os.path.join(EXTERNAL_DIR, f"{name}.csv")
-    df.to_csv(path)
-    print(f"  Saved {path} ({len(df)} rows)")
-
-
 if __name__ == "__main__":
-    # Load reference trading dates
-    ref_df    = pd.read_csv(REFERENCE_CSV, parse_dates=["date"])
-    ref_dates = pd.DatetimeIndex(ref_df["date"])
-    print(f"Reference trading days: {len(ref_dates)} "
-          f"({ref_dates[0].date()} to {ref_dates[-1].date()})\n")
+    print(f"Fetching macro data ({FROM_DATE} to {TO_DATE}) ...\n")
 
-    series_dict = {}
+    # ── yfinance sources ──────────────────────────────────────────────────────
+    gold   = fetch_yfinance("GC=F",  "gold_usd",  FROM_DATE, TO_DATE)
+    brent  = fetch_yfinance("BZ=F",  "brent_usd", FROM_DATE, TO_DATE)
+    usdinr = fetch_yfinance("INR=X", "usdinr",    FROM_DATE, TO_DATE)
 
-    # Fetch yfinance series
-    print("Fetching yfinance series ...")
-    for ticker, name, description in YFINANCE_SERIES:
-        s = fetch_yfinance_series(ticker, name, description)
-        if s is not None:
-            series_dict[name] = s
+    # ── India 10Y bond ────────────────────────────────────────────────────────
+    print("\n  Loading India 10Y bond yield ...")
+    bond = load_bond_yield()
 
-    # Load bond yield from local CSV
-    print("\nLoading bond yield ...")
-    bond = load_bond_yield(BOND_YIELD_CSV)
-    if bond is not None:
-        series_dict["india_10y"] = bond
+    # ── Load NSE calendar from spot data ─────────────────────────────────────
+    spot_path = os.path.join(RAW_DIR, "NIFTY50_spot.csv")
+    spot = pd.read_csv(spot_path, parse_dates=["date"])
+    spot["date"] = pd.to_datetime(spot["date"]).dt.tz_localize(None).dt.normalize()
+    nse_dates = spot.set_index("date").index
 
-    # Align all series to NSE calendar
-    print("\nAligning to NSE trading calendar ...")
-    aligned = align_to_reference(series_dict, ref_dates)
+    print(f"\nAligning to NSE calendar ({len(nse_dates)} trading days) ...")
 
-    print("\nAlignment check:")
-    for name, series in aligned.items():
-        missing = series.isna().sum()
-        status  = "OK" if missing == 0 else f"WARNING: {missing} NaN(s)"
-        print(f"  {name:<15} {len(series)} rows  {status}")
+    # ── Combine all macro series ──────────────────────────────────────────────
+    macro = pd.DataFrame(index=nse_dates)
+    macro.index.name = "date"
 
-    # Save individual CSVs and combined file
-    print("\nSaving ...")
-    for name, series in aligned.items():
-        df = series.reset_index()
-        df.columns = ["date", name]
-        save_csv(df.set_index("date"), name)
+    for series, name in [(gold, "gold_usd"), (brent, "brent_usd"),
+                         (usdinr, "usdinr"), (bond, "india_10y")]:
+        if series is None:
+            macro[name] = np.nan
+        else:
+            macro[name] = series.reindex(nse_dates, method="ffill")
 
-    combined            = pd.DataFrame(aligned)
-    combined.index.name = "date"
-    save_csv(combined, "macro_combined")
+    # Forward fill any remaining NaNs (weekends/holidays in source data)
+    macro = macro.ffill().bfill()
 
-    print(f"\nAll macro data saved to {EXTERNAL_DIR}/")
-    print("\nPreview — first 3 rows:")
-    print(combined.head(3).to_string())
-    print("\nPreview — last 3 rows:")
-    print(combined.tail(3).to_string())
+    nan_counts = macro.isna().sum()
+    if nan_counts.any():
+        print(f"  WARNING: NaNs remaining after fill:\n{nan_counts[nan_counts > 0]}")
+    else:
+        print("  All NaNs filled successfully.")
+
+    print(f"\n  Macro matrix shape: {macro.shape}")
+    print(f"  Date range: {macro.index[0].date()} to {macro.index[-1].date()}")
+    print(f"  Columns: {list(macro.columns)}")
+    print(macro.tail(3))
+
+    # ── Save ──────────────────────────────────────────────────────────────────
+    out_path = os.path.join(EXTERNAL_DIR, "macro_combined.csv")
+    macro.to_csv(out_path)
+    print(f"\n  Saved: {out_path}  ({len(macro)} rows)")
+    print("\nMacro data fetch complete.")
+    print("Next: rerun src/features/build_features.py with new split dates.")

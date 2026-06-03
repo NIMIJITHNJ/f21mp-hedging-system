@@ -73,6 +73,23 @@ def sortino_ratio(
 
     return float((excess.mean() / downside_std) * np.sqrt(TRADING_DAYS))
 
+def downside_deviation(
+    returns: pd.Series,
+    risk_free_rate: float = 0.065,
+) -> float:
+    """
+    Annualised downside deviation — standard deviation of returns
+    below the daily risk-free rate only.
+    Used as the denominator in the Sortino ratio.
+    """
+    daily_rf     = risk_free_rate / TRADING_DAYS
+    excess       = returns - daily_rf
+    downside     = excess[excess < 0]
+    down_std     = downside.std()
+    if np.isnan(down_std):
+        return np.nan
+    return float(down_std * np.sqrt(TRADING_DAYS))
+
 
 def max_drawdown(returns: pd.Series) -> float:
     """
@@ -191,6 +208,7 @@ def summarise(
         "volatility_pct":     round(volatility(returns) * 100, 2),
         "sharpe":             round(sharpe_ratio(returns, risk_free_rate), 3),
         "sortino":            round(sortino_ratio(returns, risk_free_rate), 3),
+        "downside_deviation_pct": round(downside_deviation(returns, risk_free_rate) * 100, 2),
         "max_drawdown_pct":   round(max_drawdown(returns) * 100, 2),
         "cvar_95_pct":        round(cvar(returns) * 100, 2),
         "var_95_pct":         round(var(returns) * 100, 2),
@@ -213,6 +231,7 @@ def print_summary(metrics: dict) -> None:
     print(f"  Volatility         : {metrics['volatility_pct']:>8.2f} %")
     print(f"  Sharpe Ratio       : {metrics['sharpe']:>8.3f}")
     print(f"  Sortino Ratio      : {metrics['sortino']:>8.3f}")
+    print(f"  Downside Deviation : {metrics['downside_deviation_pct']:>8.2f} %")
     print(f"  Max Drawdown       : {metrics['max_drawdown_pct']:>8.2f} %")
     print(f"  CVaR (95%)         : {metrics['cvar_95_pct']:>8.2f} %")
     print(f"  VaR  (95%)         : {metrics['var_95_pct']:>8.2f} %")
