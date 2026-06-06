@@ -1,0 +1,35 @@
+LSTM_C4_h10 — LOCKED FINAL MODEL
+============================================================
+Architecture : 2x LSTM(64) + Dense(32) + Softmax(3)
+Horizon      : 10-day forward volatility
+Sequence len : 20 trading days
+LR=0.0005  batch=32  dropout=0.2
+Epochs run   : 19
+
+Val  accuracy : 0.6463   macro-F1 : 0.3617
+Test accuracy : 0.2391   macro-F1 : 0.2416
+
+VALIDATION SET
+----------------------------------------
+              precision    recall  f1-score   support
+
+         Low       0.80      0.73      0.76       192
+      Medium       0.28      0.37      0.32        51
+        High       0.00      0.00      0.00         3
+
+    accuracy                           0.65       246
+   macro avg       0.36      0.37      0.36       246
+weighted avg       0.68      0.65      0.66       246
+
+TEST SET
+----------------------------------------
+              precision    recall  f1-score   support
+
+         Low       0.46      0.07      0.13       294
+      Medium       0.46      0.25      0.32       154
+        High       0.17      0.71      0.27       100
+
+    accuracy                           0.24       548
+   macro avg       0.36      0.34      0.24       548
+weighted avg       0.41      0.24      0.21       548
+

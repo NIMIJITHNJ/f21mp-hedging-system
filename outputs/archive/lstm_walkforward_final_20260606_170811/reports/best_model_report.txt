@@ -1,0 +1,28 @@
+HEDRA — FINAL MODEL REPORT
+============================================================
+
+Selection : Walk-forward CV (5 folds, eval 2020-2024)
+Holdout   : Jan 2025 - Mar 2026 (confirmatory, used ONCE)
+
+Horizon   : 7-day
+Config    : C3  {'lstm_units': 64, 'dense_units': 32, 'dropout': 0.2, 'batch': 32, 'lr': 0.001}
+Seed      : 42 (fixed)
+
+WALK-FORWARD SELECTION (primary result)
+----------------------------------------
+Mean macro-F1   : 0.2946 ± 0.1190
+Mean High rec   : 0.3753
+Mean min rec    : 0.0990
+Collapse rate   : 0.56
+
+HOLDOUT (confirmatory)
+----------------------------------------
+              precision    recall  f1-score   support
+
+         Low       0.51      1.00      0.67       153
+      Medium       0.00      0.00      0.00        98
+        High       0.00      0.00      0.00        51
+
+    accuracy                           0.51       302
+   macro avg       0.17      0.33      0.22       302
+weighted avg       0.26      0.51      0.34       302
