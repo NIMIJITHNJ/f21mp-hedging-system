@@ -1,0 +1,18 @@
+{
+  "selection_method": "Walk-forward evaluation across 2020-2024. Lower mean QLIKE is preferred, followed by lower stress-period MAE, MAE and RMSE.",
+  "selected_horizon": 1,
+  "selected_model": "gjr_garch",
+  "mean_qlike": -2.7735229155509873,
+  "mean_stress_mae": 0.1300138441134438,
+  "mean_mae": 0.09228283978071335,
+  "mean_rmse": 0.12597399168642082,
+  "mean_r2": -0.11330609623141634,
+  "mean_directional_accuracy": 0.6711568572468992,
+  "confirmatory_period": "2025-01-01 to 2026-03-31",
+  "notes": [
+    "The 2025-2026 period is an additional confirmatory evaluation and is not used for model selection.",
+    "HAR-inspired features use daily returns because intraday realised-volatility data is unavailable.",
+    "OI availability is explicitly represented by the oi_available feature.",
+    "Statistical forecasts are horizon-matched and use annual expanding refits with prior-year data only."
+  ]
+}
