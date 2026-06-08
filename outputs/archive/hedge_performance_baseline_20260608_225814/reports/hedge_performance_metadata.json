@@ -1,0 +1,17 @@
+{
+  "portfolio": "equal-weight portfolio of 10 Nifty 50 constituent stocks",
+  "hedging_instrument": "Nifty 50 continuous futures",
+  "selected_forecast_model": "GJR-GARCH(1,1) with Student-t errors",
+  "forecast_horizon": "1 trading day",
+  "timing_rule": "Forecast generated at end of day t is shifted and applied to the futures position for day t+1.",
+  "transaction_cost_assumption_bps": 2.0,
+  "rolling_minimum_variance_window_days": 60,
+  "max_hedge_ratio": 1.5,
+  "gjr_regime_levels": {
+    "low": 0.35,
+    "medium": 0.7,
+    "high": 1.0
+  },
+  "selection_period": "2020-01-01 to 2024-12-31",
+  "confirmatory_period": "2025-01-01 to 2026-03-31"
+}
