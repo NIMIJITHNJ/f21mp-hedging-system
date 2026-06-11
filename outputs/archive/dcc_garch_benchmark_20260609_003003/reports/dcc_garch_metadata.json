@@ -1,0 +1,13 @@
+{
+  "portfolio": "equal-weight portfolio of 10 Nifty 50 constituent stocks",
+  "hedging_instrument": "Nifty 50 continuous futures",
+  "marginal_models": "GJR-GARCH(1,1) with Student-t errors for portfolio and futures returns",
+  "dependence_model": "DCC(1,1) estimated using Gaussian QML",
+  "hedge_ratio_formula": "conditional covariance(portfolio, futures) / conditional variance(futures)",
+  "timing_rule": "The ratio used for return at day t is based on conditional state available before return t is observed.",
+  "refit_rule": "Annual expanding refit using data through the previous calendar year-end only.",
+  "transaction_cost_assumption_bps": 2.0,
+  "selection_period": "2020-01-01 to 2024-12-31",
+  "confirmatory_period": "2025-01-01 to 2026-03-31",
+  "max_hedge_ratio": 1.5
+}
