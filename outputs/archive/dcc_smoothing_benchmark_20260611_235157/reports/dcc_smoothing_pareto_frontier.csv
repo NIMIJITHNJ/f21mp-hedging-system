@@ -1,0 +1,2 @@
+label,total_return_pct,annual_return_pct,volatility_pct,sharpe,sortino,downside_deviation_pct,max_drawdown_pct,cvar_95_pct,var_95_pct,calmar,hedge_ratio_std,strategy,period,cost_bps,n_days,average_hedge_ratio,min_hedge_ratio,max_hedge_ratio,average_daily_turnover,total_turnover,total_transaction_cost_pct,gross_total_return_pct,hedging_effectiveness
+dcc_ema20_band0p10,0.51,0.1,6.05,-1.057,-1.414,4.52,-16.2,-0.9,-0.62,0.006,0.0824,dcc_ema20_band0p10,selection_2020_2024,2.0,1243,1.0174,0.8734,1.3048,0.00264,3.2818,0.0656,0.57,0.9119

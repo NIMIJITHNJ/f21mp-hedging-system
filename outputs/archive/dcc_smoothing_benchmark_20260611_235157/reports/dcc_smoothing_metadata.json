@@ -1,0 +1,21 @@
+{
+  "purpose": "Evaluate practical DCC-GJR-GARCH execution variants using EMA smoothing and no-trade bands.",
+  "selection_period": "2020-01-01 to 2024-12-31",
+  "confirmatory_period": "2025-01-01 to 2026-03-31",
+  "transaction_cost_assumption_bps": 2.0,
+  "ema_spans": [
+    1,
+    3,
+    5,
+    10,
+    20
+  ],
+  "no_trade_bands": [
+    0.0,
+    0.02,
+    0.05,
+    0.1
+  ],
+  "selection_rule": "Compare selection-period volatility, drawdown, CVaR and turnover. Do not repeatedly retune the grid using confirmatory results.",
+  "timing_rule": "Raw DCC ratio for day t is available before return t. Smoothing and band logic use only current and earlier available targets."
+}
