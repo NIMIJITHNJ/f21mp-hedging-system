@@ -1,0 +1,18 @@
+(define (problem hedge_plan_test_margin_block-problem)
+ (:domain hedge_plan_test_margin_block-domain)
+ (:init
+              (position_open)
+              (rehedge_allowed)
+              (hold_allowed)
+              (= (current_hedge_bps) 70)
+              (= (target_hedge_bps) 80)
+              (= (max_hedge_bps) 150)
+              (= (estimated_trade_cost_micros) 20)
+              (= (max_trade_cost_micros) 50)
+ )
+ (:goal (and 
+           (decision_completed)
+           (or (not (position_open)) (not (roll_required)) (roll_completed))
+        )
+ )
+)

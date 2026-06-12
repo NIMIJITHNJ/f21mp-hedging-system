@@ -1,0 +1,238 @@
+[
+  {
+    "scenario_name": "demo_open_hedge",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "OPEN_HEDGE"
+    ],
+    "primary_action": "OPEN_HEDGE",
+    "explanation": [
+      "Risk regime=HIGH; predicted next-day volatility=0.220000.",
+      "Core ratio=0.80; risk adjustment=+10 hedge bps.",
+      "Current ratio=0.00; planner target=0.90; requested change=+90 hedge bps.",
+      "Estimated turnover cost=180 micro-units; configured limit=250 micro-units.",
+      "Planner action sequence: OPEN_HEDGE."
+    ],
+    "prepared_state": {
+      "scenario_name": "demo_open_hedge",
+      "predicted_volatility": 0.22,
+      "risk_regime": "HIGH",
+      "current_hedge_bps": 0,
+      "core_target_bps": 80,
+      "risk_adjustment_bps": 10,
+      "unconstrained_target_bps": 90,
+      "planner_target_bps": 90,
+      "position_open": false,
+      "margin_available": true,
+      "rehedge_allowed": true,
+      "adjustment_bps": 90,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 180,
+      "max_trade_cost_micros": 250,
+      "days_to_expiry": 12,
+      "roll_threshold_days": 3,
+      "roll_required": false,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\demo_open_hedge\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\demo_open_hedge\\problem.pddl"
+  },
+  {
+    "scenario_name": "demo_increase_hedge",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "INCREASE_HEDGE"
+    ],
+    "primary_action": "INCREASE_HEDGE",
+    "explanation": [
+      "Risk regime=HIGH; predicted next-day volatility=0.190000.",
+      "Core ratio=0.90; risk adjustment=+10 hedge bps.",
+      "Current ratio=0.70; planner target=1.00; requested change=+30 hedge bps.",
+      "Estimated turnover cost=60 micro-units; configured limit=250 micro-units.",
+      "Planner action sequence: INCREASE_HEDGE."
+    ],
+    "prepared_state": {
+      "scenario_name": "demo_increase_hedge",
+      "predicted_volatility": 0.19,
+      "risk_regime": "HIGH",
+      "current_hedge_bps": 70,
+      "core_target_bps": 90,
+      "risk_adjustment_bps": 10,
+      "unconstrained_target_bps": 100,
+      "planner_target_bps": 100,
+      "position_open": true,
+      "margin_available": true,
+      "rehedge_allowed": true,
+      "adjustment_bps": 30,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 60,
+      "max_trade_cost_micros": 250,
+      "days_to_expiry": 10,
+      "roll_threshold_days": 3,
+      "roll_required": false,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\demo_increase_hedge\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\demo_increase_hedge\\problem.pddl"
+  },
+  {
+    "scenario_name": "demo_reduce_hedge",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "REDUCE_HEDGE"
+    ],
+    "primary_action": "REDUCE_HEDGE",
+    "explanation": [
+      "Risk regime=LOW; predicted next-day volatility=0.080000.",
+      "Core ratio=0.75; risk adjustment=-10 hedge bps.",
+      "Current ratio=1.00; planner target=0.65; requested change=-35 hedge bps.",
+      "Estimated turnover cost=70 micro-units; configured limit=250 micro-units.",
+      "Planner action sequence: REDUCE_HEDGE."
+    ],
+    "prepared_state": {
+      "scenario_name": "demo_reduce_hedge",
+      "predicted_volatility": 0.08,
+      "risk_regime": "LOW",
+      "current_hedge_bps": 100,
+      "core_target_bps": 75,
+      "risk_adjustment_bps": -10,
+      "unconstrained_target_bps": 65,
+      "planner_target_bps": 65,
+      "position_open": true,
+      "margin_available": true,
+      "rehedge_allowed": true,
+      "adjustment_bps": -35,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 70,
+      "max_trade_cost_micros": 250,
+      "days_to_expiry": 9,
+      "roll_threshold_days": 3,
+      "roll_required": false,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\demo_reduce_hedge\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\demo_reduce_hedge\\problem.pddl"
+  },
+  {
+    "scenario_name": "demo_close_hedge",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "CLOSE_HEDGE"
+    ],
+    "primary_action": "CLOSE_HEDGE",
+    "explanation": [
+      "Risk regime=LOW; predicted next-day volatility=0.050000.",
+      "Core ratio=0.05; risk adjustment=-10 hedge bps.",
+      "Current ratio=0.50; planner target=0.00; requested change=-50 hedge bps.",
+      "Estimated turnover cost=100 micro-units; configured limit=250 micro-units.",
+      "Planner action sequence: CLOSE_HEDGE."
+    ],
+    "prepared_state": {
+      "scenario_name": "demo_close_hedge",
+      "predicted_volatility": 0.05,
+      "risk_regime": "LOW",
+      "current_hedge_bps": 50,
+      "core_target_bps": 5,
+      "risk_adjustment_bps": -10,
+      "unconstrained_target_bps": -5,
+      "planner_target_bps": 0,
+      "position_open": true,
+      "margin_available": true,
+      "rehedge_allowed": true,
+      "adjustment_bps": -50,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 100,
+      "max_trade_cost_micros": 250,
+      "days_to_expiry": 11,
+      "roll_threshold_days": 3,
+      "roll_required": false,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\demo_close_hedge\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\demo_close_hedge\\problem.pddl"
+  },
+  {
+    "scenario_name": "demo_hold_position",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "HOLD_POSITION"
+    ],
+    "primary_action": "HOLD_POSITION",
+    "explanation": [
+      "Risk regime=MEDIUM; predicted next-day volatility=0.120000.",
+      "Core ratio=0.83; risk adjustment=+0 hedge bps.",
+      "Current ratio=0.85; planner target=0.85; requested change=+0 hedge bps.",
+      "Estimated turnover cost=0 micro-units; configured limit=250 micro-units.",
+      "Planner action sequence: HOLD_POSITION."
+    ],
+    "prepared_state": {
+      "scenario_name": "demo_hold_position",
+      "predicted_volatility": 0.12,
+      "risk_regime": "MEDIUM",
+      "current_hedge_bps": 85,
+      "core_target_bps": 83,
+      "risk_adjustment_bps": 0,
+      "unconstrained_target_bps": 83,
+      "planner_target_bps": 85,
+      "position_open": true,
+      "margin_available": true,
+      "rehedge_allowed": true,
+      "adjustment_bps": 0,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 0,
+      "max_trade_cost_micros": 250,
+      "days_to_expiry": 15,
+      "roll_threshold_days": 3,
+      "roll_required": false,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\demo_hold_position\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\demo_hold_position\\problem.pddl"
+  },
+  {
+    "scenario_name": "demo_roll_and_hold",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "ROLL_FUTURES_FORWARD",
+      "HOLD_POSITION"
+    ],
+    "primary_action": "HOLD_POSITION",
+    "explanation": [
+      "Risk regime=MEDIUM; predicted next-day volatility=0.130000.",
+      "Core ratio=0.90; risk adjustment=+0 hedge bps.",
+      "Current ratio=0.90; planner target=0.90; requested change=+0 hedge bps.",
+      "Estimated turnover cost=0 micro-units; configured limit=250 micro-units.",
+      "Contract expires in 2 day(s), so the open futures position must be rolled.",
+      "Planner action sequence: ROLL_FUTURES_FORWARD -> HOLD_POSITION."
+    ],
+    "prepared_state": {
+      "scenario_name": "demo_roll_and_hold",
+      "predicted_volatility": 0.13,
+      "risk_regime": "MEDIUM",
+      "current_hedge_bps": 90,
+      "core_target_bps": 90,
+      "risk_adjustment_bps": 0,
+      "unconstrained_target_bps": 90,
+      "planner_target_bps": 90,
+      "position_open": true,
+      "margin_available": true,
+      "rehedge_allowed": true,
+      "adjustment_bps": 0,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 0,
+      "max_trade_cost_micros": 250,
+      "days_to_expiry": 2,
+      "roll_threshold_days": 3,
+      "roll_required": true,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\demo_roll_and_hold\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\demo_roll_and_hold\\problem.pddl"
+  }
+]

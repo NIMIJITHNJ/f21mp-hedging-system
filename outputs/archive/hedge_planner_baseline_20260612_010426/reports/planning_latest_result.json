@@ -1,0 +1,42 @@
+[
+  {
+    "scenario_name": "test_margin_block",
+    "planner_status": "PlanGenerationResultStatus.SOLVED_SATISFICING",
+    "used_fallback": false,
+    "action_sequence": [
+      "HOLD_POSITION"
+    ],
+    "primary_action": "HOLD_POSITION",
+    "explanation": [
+      "Risk regime=HIGH; predicted next-day volatility=0.180000.",
+      "Core ratio=0.70; risk adjustment=+10 hedge bps.",
+      "Current ratio=0.70; planner target=0.80; requested change=+10 hedge bps.",
+      "Estimated turnover cost=20 micro-units; configured limit=50 micro-units.",
+      "The requested increase is held because additional margin is unavailable.",
+      "Planner action sequence: HOLD_POSITION."
+    ],
+    "prepared_state": {
+      "scenario_name": "test_margin_block",
+      "predicted_volatility": 0.18,
+      "risk_regime": "HIGH",
+      "current_hedge_bps": 70,
+      "core_target_bps": 70,
+      "risk_adjustment_bps": 10,
+      "unconstrained_target_bps": 80,
+      "planner_target_bps": 80,
+      "position_open": true,
+      "margin_available": false,
+      "rehedge_allowed": true,
+      "adjustment_bps": 10,
+      "no_trade_band_bps": 5,
+      "estimated_trade_cost_micros": 20,
+      "max_trade_cost_micros": 50,
+      "days_to_expiry": 12,
+      "roll_threshold_days": 3,
+      "roll_required": false,
+      "max_hedge_bps": 150
+    },
+    "pddl_domain_file": "outputs\\reports\\planning\\pddl\\test_margin_block\\domain.pddl",
+    "pddl_problem_file": "outputs\\reports\\planning\\pddl\\test_margin_block\\problem.pddl"
+  }
+]
