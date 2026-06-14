@@ -13,7 +13,9 @@ Run from the project root:
 """
 
 import os
+import sys
 import math
+from pathlib import Path
 from datetime import datetime, timezone, timedelta, date as dt_date
 from html import escape
 
@@ -23,6 +25,18 @@ from scipy.optimize import brentq
 from dotenv import load_dotenv, set_key
 from kiteconnect import KiteConnect
 import streamlit as st
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from src.broker.kite_broker_adapter import get_live_broker_snapshot
+from src.planning.run_planned_futures_execution import (
+    PlannedExecutionInput,
+    run_planned_execution,
+)
+
 
 load_dotenv()
 
@@ -210,6 +224,60 @@ div[data-testid="stButton"] button {{
 
 .hedge-panel {{ background: #16161a; border: 1px solid #2a2a30; border-radius: 12px; padding: 24px; }}
 .hedge-placeholder {{ display: flex; align-items: center; justify-content: center; height: 60px; color: #3a3a3a; font-size: 13px; font-family: 'Inter', sans-serif; }}
+
+
+.mode-card {{
+    background: #16161a;
+    border: 1px solid #2a2a30;
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin: 4px 0 24px;
+    color: #9090a0;
+    font-size: 13px;
+}}
+.mode-card strong {{
+    color: #f0f0f5;
+    font-weight: 600;
+}}
+.mode-pill {{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border-radius: 18px;
+    background: #1e1e28;
+    border: 1px solid #2a2a30;
+    color: #6c63ff;
+    font-size: 12px;
+    margin-right: 8px;
+}}
+.placeholder-title {{
+    font-size: 15px;
+    font-weight: 600;
+    color: #f0f0f5;
+    margin-bottom: 8px;
+}}
+.placeholder-text {{
+    font-size: 13px;
+    color: #9090a0;
+    line-height: 1.6;
+}}
+.stTabs [data-baseweb="tab-list"] {{
+    gap: 4px;
+    border-bottom: 1px solid #2a2a30;
+    margin-bottom: 20px;
+}}
+.stTabs [data-baseweb="tab"] {{
+    background: transparent;
+    color: #9090a0;
+    border-radius: 8px 8px 0 0;
+    padding: 10px 16px;
+}}
+.stTabs [aria-selected="true"] {{
+    color: #f0f0f5 !important;
+    border-bottom: 3px solid #6c63ff !important;
+}}
+
 </style>
 """
 
@@ -329,12 +397,16 @@ def render_custom_sidebar(profile, token_valid=True):
             "<div class='sidebar-email'>" + email + "</div>"
             "<div class='sidebar-pill'><span class='sidebar-dot'></span><span>Token active</span></div>"
             "<div class='sidebar-line'></div>"
-            "<div class='sidebar-label'>Pages</div>"
-            "<div class='sidebar-page'>Overview</div>"
-            "<div class='sidebar-page'>Portfolio</div>"
-            "<div class='sidebar-page sidebar-page-disabled'>ML Prediction <span class='sidebar-soon'>soon</span></div>"
-            "<div class='sidebar-page sidebar-page-disabled'>SHAP <span class='sidebar-soon'>soon</span></div>"
-            "<div class='sidebar-page sidebar-page-disabled'>Audit Log <span class='sidebar-soon'>soon</span></div>"
+            "<div class='sidebar-label'>System</div>"
+            "<div class='sidebar-page'>Live monitoring mode</div>"
+            "<div class='sidebar-page'>Historical backtesting mode</div>"
+            "<div class='sidebar-page'>Kite market data active</div>"
+            "<div class='sidebar-page'>Planner backend connected</div>"
+            "<div class='sidebar-page'>Futures execution layer</div>"
+            "<div class='sidebar-line'></div>"
+            "<div class='sidebar-label'>Capital Setup</div>"
+            "<div class='sidebar-page'>Total: &#8377;1,00,00,000</div>"
+            "<div class='sidebar-page'>Stocks 80% &middot; Margin 20%</div>"
             "</div>"
         )
     else:
@@ -342,11 +414,11 @@ def render_custom_sidebar(profile, token_valid=True):
             "<div class='custom-sidebar'>"
             "<div class='sidebar-logo-box' style='margin-bottom:20px;'>H</div>"
             "<div class='sidebar-line'></div>"
-            "<div class='sidebar-icon-item'>&#8962;</div>"
-            "<div class='sidebar-icon-item'>&#9638;</div>"
-            "<div class='sidebar-icon-item sidebar-icon-disabled'>&#9670;</div>"
-            "<div class='sidebar-icon-item sidebar-icon-disabled'>&#9678;</div>"
-            "<div class='sidebar-icon-item sidebar-icon-disabled'>&#9711;</div>"
+            "<div class='sidebar-icon-item' title='Live monitoring'>&#9679;</div>"
+            "<div class='sidebar-icon-item' title='Historical backtesting'>&#9638;</div>"
+            "<div class='sidebar-icon-item' title='Kite market data'>&#8599;</div>"
+            "<div class='sidebar-icon-item' title='Planner backend'>&#9678;</div>"
+            "<div class='sidebar-icon-item' title='Futures execution'>&#9711;</div>"
             "</div>"
         )
 
@@ -426,22 +498,64 @@ def render_sector_pie(sector_totals):
 
 # â”€â”€ Dashboard home â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def render_dashboard_home(kite, profile):
-    st.markdown(get_css(auth_page=False), unsafe_allow_html=True)
-    render_custom_sidebar(profile, token_valid=True)
 
-    now        = datetime.now(IST).strftime("%d %b %Y, %H:%M IST")
-    token_raw  = os.getenv("KITE_ACCESS_TOKEN", "")
-    tok_prev   = (token_raw[:8] + "&#8226;&#8226;&#8226;&#8226;" + token_raw[-4:]) if token_raw else "â€”"
-    user_name  = escape(profile.get("user_name", "â€”"))
-    user_email = escape(profile.get("email", "â€”"))
-
+def render_placeholder_section(title, text):
     st.markdown(
-        "<p class='page-title'>Overview</p>"
-        "<p class='page-sub'>" + now + "</p>",
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>" + escape(title) + "</div>"
+        "<div class='placeholder-text'>" + escape(text) + "</div>"
+        "</div>",
         unsafe_allow_html=True,
     )
 
+
+def render_live_overview_summary():
+    st.markdown(
+        "<div class='section-header'>System Summary</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Operating Mode</div>"
+        "<div class='stat-value-sm'>Live Monitoring</div>"
+        "<div class='stat-meta'>Kite market data active</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Capital Model</div>"
+        "<div class='stat-value-sm'>&#8377;" + "{:,.0f}".format(TOTAL_CAPITAL) + "</div>"
+        "<div class='stat-meta'>80% stocks &middot; 20% margin</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Planner Status</div>"
+        "<div class='stat-value-sm'>Connected</div>"
+        "<div class='stat-meta'>Unified Planning + ENHSP</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Hedge Engine</div>"
+        "<div class='stat-value-sm'>Ready</div>"
+        "<div class='stat-meta'>NIFTY futures execution layer</div>"
+        "</div>"
+
+        "</div>"
+        "<div style='height:1px;background:#2a2a30;margin:20px 0;'></div>"
+        "<div class='placeholder-text'>"
+        "<strong style='color:#f0f0f5;'>Next integration:</strong> this landing page will show the latest planner action, "
+        "target hedge ratio, recommended short futures contracts, margin required, and achieved hedge ratio. "
+        "The detailed output will be shown in the Hedge Plan tab."
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_email):
     # â”€â”€ Status cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     c1, c2, c3, c4 = st.columns(4)
 
@@ -478,6 +592,66 @@ def render_dashboard_home(kite, profile):
         )
 
     # â”€â”€ Portfolio + Sector chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    render_live_overview_summary()
+
+    st.markdown(
+        "<div class='section-header'>Last Hedge Decision</div>",
+        unsafe_allow_html=True,
+    )
+
+    log_path = os.path.join(
+        os.path.dirname(__file__), "..", "outputs", "logs", "decision_log.csv"
+    )
+
+    if os.path.exists(log_path):
+        log_df = pd.read_csv(log_path)
+        if not log_df.empty:
+            last = log_df.iloc[-1]
+            rc   = str(last.get("risk_class", "â€”")).lower()
+            rcol = {"low": "#4ade80", "medium": "#fbbf24", "high": "#f87171"}.get(rc, "#9090a0")
+
+            d1, d2, d3, d4 = st.columns(4)
+            with d1:
+                st.markdown(
+                    "<div class='stat-card'><div class='stat-label'>Date</div>"
+                    "<div class='stat-value-sm'>" + str(last.get("date", "â€”")) + "</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with d2:
+                st.markdown(
+                    "<div class='stat-card'><div class='stat-label'>Risk Class</div>"
+                    "<div class='stat-value-sm' style='color:" + rcol + ";text-transform:capitalize;'>"
+                    + rc + "</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with d3:
+                st.markdown(
+                    "<div class='stat-card'><div class='stat-label'>Hedge Action</div>"
+                    "<div class='stat-value-sm'>" + str(last.get("hedge_action", "â€”")) + "</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with d4:
+                st.markdown(
+                    "<div class='stat-card'><div class='stat-label'>Hedge Ratio</div>"
+                    "<div class='stat-value'>" + str(last.get("hedge_ratio", "â€”")) + "</div></div>",
+                    unsafe_allow_html=True,
+                )
+            return
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='hedge-placeholder'>"
+        "No hedge decisions yet &mdash; model pipeline not yet active"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+# â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+
+def render_live_portfolio_content(kite):
     st.markdown(
         "<div class='section-header'>Portfolio &mdash; Nifty 50 Constituents</div>",
         unsafe_allow_html=True,
@@ -662,60 +836,303 @@ def render_dashboard_home(kite, profile):
         render_sector_pie(sector_totals)
 
     # â”€â”€ Last hedge decision â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+
+
+def format_money_html(value, decimals=0):
+    try:
+        return "&#8377;" + f"{float(value):,.{decimals}f}"
+    except Exception:
+        return "&#8377;0"
+
+
+def build_live_hedge_plan(kite):
+    snapshot = get_live_broker_snapshot(kite)
+
+    total_capital = TOTAL_CAPITAL
+    stock_allocation = STOCK_ALLOCATION
+    simulated_margin_reserve = MARGIN_RESERVE
+
+    portfolio_value = stock_allocation
+    predicted_volatility = 0.18
+    risk_regime = "HIGH"
+    core_target_ratio = 0.70
+
+    margin_per_contract = snapshot.futures_price * snapshot.contract.lot_size * 0.12
+
+    item = PlannedExecutionInput(
+        scenario_name="dashboard_live_hedge_plan",
+        portfolio_value=portfolio_value,
+        core_target_ratio=core_target_ratio,
+        predicted_volatility=predicted_volatility,
+        risk_regime=risk_regime,
+        futures_price=snapshot.futures_price,
+        lot_size=snapshot.contract.lot_size,
+        current_short_contracts=snapshot.current_position.current_short_contracts,
+        margin_per_contract=margin_per_contract,
+        available_margin=simulated_margin_reserve,
+        days_to_expiry=snapshot.days_to_expiry,
+        max_trade_cost_micros=250,
+    )
+
+    result = run_planned_execution(item)
+
+    inputs = {
+        "total_capital": total_capital,
+        "stock_allocation": stock_allocation,
+        "simulated_margin_reserve": simulated_margin_reserve,
+        "portfolio_value": portfolio_value,
+        "predicted_volatility": predicted_volatility,
+        "risk_regime": risk_regime,
+        "core_target_ratio": core_target_ratio,
+        "margin_per_contract": margin_per_contract,
+    }
+
+    return snapshot, item, result, inputs
+
+
+def get_result_field(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+
+def render_live_hedge_plan(kite):
     st.markdown(
-        "<div class='section-header'>Last Hedge Decision</div>",
+        "<div class='section-header'>Live Hedge Recommendation</div>",
         unsafe_allow_html=True,
     )
 
-    log_path = os.path.join(
-        os.path.dirname(__file__), "..", "outputs", "logs", "decision_log.csv"
-    )
+    if "live_hedge_plan_cache" not in st.session_state:
+        with st.spinner("Running live broker snapshot, planner, and futures execution engine ..."):
+            try:
+                snapshot, item, result, inputs = build_live_hedge_plan(kite)
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": snapshot,
+                    "item": item,
+                    "result": result,
+                    "inputs": inputs,
+                    "error": None,
+                }
+            except Exception as exc:
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": None,
+                    "item": None,
+                    "result": None,
+                    "inputs": None,
+                    "error": str(exc),
+                }
 
-    if os.path.exists(log_path):
-        log_df = pd.read_csv(log_path)
-        if not log_df.empty:
-            last = log_df.iloc[-1]
-            rc   = str(last.get("risk_class", "â€”")).lower()
-            rcol = {"low": "#4ade80", "medium": "#fbbf24", "high": "#f87171"}.get(rc, "#9090a0")
+    cache = st.session_state.live_hedge_plan_cache
 
-            d1, d2, d3, d4 = st.columns(4)
-            with d1:
-                st.markdown(
-                    "<div class='stat-card'><div class='stat-label'>Date</div>"
-                    "<div class='stat-value-sm'>" + str(last.get("date", "â€”")) + "</div></div>",
-                    unsafe_allow_html=True,
-                )
-            with d2:
-                st.markdown(
-                    "<div class='stat-card'><div class='stat-label'>Risk Class</div>"
-                    "<div class='stat-value-sm' style='color:" + rcol + ";text-transform:capitalize;'>"
-                    + rc + "</div></div>",
-                    unsafe_allow_html=True,
-                )
-            with d3:
-                st.markdown(
-                    "<div class='stat-card'><div class='stat-label'>Hedge Action</div>"
-                    "<div class='stat-value-sm'>" + str(last.get("hedge_action", "â€”")) + "</div></div>",
-                    unsafe_allow_html=True,
-                )
-            with d4:
-                st.markdown(
-                    "<div class='stat-card'><div class='stat-label'>Hedge Ratio</div>"
-                    "<div class='stat-value'>" + str(last.get("hedge_ratio", "â€”")) + "</div></div>",
-                    unsafe_allow_html=True,
-                )
-            return
+    if cache["error"]:
+        st.markdown(
+            "<div style='background:#1a0808;border:1px solid #4a1a1a;border-radius:8px;"
+            "padding:14px 16px;font-size:13px;color:#f87171;'>"
+            "Could not generate hedge plan: " + escape(cache["error"]) + "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    snapshot = cache["snapshot"]
+    result = cache["result"]
+    inputs = cache["inputs"]
+    execution = result.futures_execution_result
+    planning = result.planning_result
+
+    margin_colour = "#4ade80" if result.margin_sufficient else "#f87171"
+    action_colour = "#4ade80" if result.status == "EXECUTABLE_PLAN" else "#fbbf24"
 
     st.markdown(
         "<div class='hedge-panel'>"
-        "<div class='hedge-placeholder'>"
-        "No hedge decisions yet &mdash; model pipeline not yet active"
-        "</div></div>",
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Planner Action</div>"
+        "<div class='stat-value-sm' style='color:" + action_colour + ";'>" + escape(str(result.position_action)) + "</div>"
+        "<div class='stat-meta'>" + escape(str(result.execution_instruction)) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Recommended Contracts</div>"
+        "<div class='stat-value-sm'>" + str(result.recommended_short_contracts) + " short NIFTY FUT</div>"
+        "<div class='stat-meta'>Current: " + str(result.current_short_contracts) + " &middot; Change: +" + str(result.contract_delta) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Target Hedge Ratio</div>"
+        "<div class='stat-value-sm'>" + f"{result.execution_target_hedge_ratio:.2f}" + "</div>"
+        "<div class='stat-meta'>Achieved: " + f"{get_result_field(execution, 'achieved_hedge_ratio', 0.0):.4f}" + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Margin Check</div>"
+        "<div class='stat-value-sm' style='color:" + margin_colour + ";'>" + str(result.margin_sufficient) + "</div>"
+        "<div class='stat-meta'>Required: " + format_money_html(get_result_field(execution, 'additional_margin_required', 0.0), 0) + "</div>"
+        "</div>"
+
+        "</div>"
+
+        "<div style='height:1px;background:#2a2a30;margin:20px 0;'></div>"
+
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Futures Contract</div>"
+        "<div class='stat-value-sm'>" + escape(snapshot.contract.tradingsymbol) + "</div>"
+        "<div class='stat-meta'>Expiry: " + escape(str(snapshot.contract.expiry)) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Futures Price</div>"
+        "<div class='stat-value-sm'>" + format_money_html(snapshot.futures_price, 2) + "</div>"
+        "<div class='stat-meta'>Lot size: " + str(snapshot.contract.lot_size) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Portfolio Exposure</div>"
+        "<div class='stat-value-sm'>" + format_money_html(inputs["portfolio_value"], 0) + "</div>"
+        "<div class='stat-meta'>Risk regime: " + escape(inputs["risk_regime"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Margin Reserve</div>"
+        "<div class='stat-value-sm'>" + format_money_html(inputs["simulated_margin_reserve"], 0) + "</div>"
+        "<div class='stat-meta'>Kite margin shown separately in adapter</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    plan_lines = get_result_field(planning, 'explanation', []) or []
+    exec_lines = get_result_field(execution, 'explanation', []) or []
+
+    plan_html = "".join("<li>" + escape(str(line)) + "</li>" for line in plan_lines)
+    exec_html = "".join("<li>" + escape(str(line)) + "</li>" for line in exec_lines)
+
+    st.markdown(
+        "<div class='section-header'>Planner Explanation</div>"
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>Planning trace</div>"
+        "<ul class='placeholder-text'>" + plan_html + "</ul>"
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+        "<div class='placeholder-title'>Execution trace</div>"
+        "<ul class='placeholder-text'>" + exec_html + "</ul>"
+        "</div>",
         unsafe_allow_html=True,
     )
 
 
-# â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def render_dashboard_home(kite, profile):
+    st.markdown(get_css(auth_page=False), unsafe_allow_html=True)
+    render_custom_sidebar(profile, token_valid=True)
+
+    now        = datetime.now(IST).strftime("%d %b %Y, %H:%M IST")
+    token_raw  = os.getenv("KITE_ACCESS_TOKEN", "")
+    tok_prev   = (token_raw[:8] + "&#8226;&#8226;&#8226;&#8226;" + token_raw[-4:]) if token_raw else "—"
+    user_name  = escape(profile.get("user_name", "—"))
+    user_email = escape(profile.get("email", "—"))
+
+    st.markdown(
+        "<p class='page-title'>Hedra Dashboard</p>"
+        "<p class='page-sub'>" + now + "</p>",
+        unsafe_allow_html=True,
+    )
+
+    mode = st.radio(
+        "Operating Mode",
+        ["Live Monitoring", "Historical Backtesting"],
+        horizontal=True,
+        key="operating_mode",
+        label_visibility="collapsed",
+    )
+
+    st.markdown(
+        "<div class='mode-card'>"
+        "<span class='mode-pill'>" + escape(mode) + "</span>"
+        "<strong>Workflow:</strong> "
+        + (
+            "Live Kite market data, simulated capital, and real planner/execution recommendation."
+            if mode == "Live Monitoring"
+            else "Replay historical datasets, historical hedge plans, and backtest performance."
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    tab_overview, tab_portfolio, tab_market, tab_ml, tab_plan, tab_explain, tab_eval, tab_audit = st.tabs([
+        "Overview",
+        "Portfolio",
+        "Market Data",
+        "ML Prediction",
+        "Hedge Plan",
+        "Explanation",
+        "Backtest Evaluation",
+        "Audit Log",
+    ])
+
+    with tab_overview:
+        if mode == "Live Monitoring":
+            render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_email)
+        else:
+            render_placeholder_section(
+                "Historical Backtesting Overview",
+                "This section will summarise the selected historical dataset, date range, portfolio value, risk regime, and planning-based hedge result."
+            )
+
+    with tab_portfolio:
+        if mode == "Live Monitoring":
+            render_live_portfolio_content(kite)
+        else:
+            render_placeholder_section(
+                "Historical Portfolio Snapshot",
+                "This tab will load portfolio values from the selected backtest dataset instead of live Kite quotes."
+            )
+
+    with tab_market:
+        render_placeholder_section(
+            "Market Data",
+            "This tab will show live NIFTY futures data in Live mode and historical market/futures data in Backtesting mode."
+        )
+
+    with tab_ml:
+        render_placeholder_section(
+            "ML Prediction",
+            "This tab will show predicted volatility, risk regime, and model inputs from the GJR-GARCH / ML prediction layer."
+        )
+
+    with tab_plan:
+        if mode == "Live Monitoring":
+            render_live_hedge_plan(kite)
+        else:
+            render_placeholder_section(
+                "Historical Hedge Plan",
+                "This tab will replay the planner action, hedge ratio, futures contracts, margin check, and explanation for the selected historical backtest point."
+            )
+
+    with tab_explain:
+        render_placeholder_section(
+            "Explanation",
+            "This tab will show planner reasoning, rejected alternatives, risk drivers, and human-readable decision justification."
+        )
+
+    with tab_eval:
+        render_placeholder_section(
+            "Backtest Evaluation",
+            "This tab will compare no hedge, static hedge, rolling hedge, DCC hedge, smoothed DCC, no-trade-band, and planning-based results."
+        )
+
+    with tab_audit:
+        render_placeholder_section(
+            "Audit Log",
+            "This tab will show traceable decision records for live and historical hedge recommendations."
+        )
+
 
 def main():
     if not API_KEY or not API_SECRET:
