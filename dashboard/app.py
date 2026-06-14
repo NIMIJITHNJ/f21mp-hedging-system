@@ -1,12 +1,12 @@
-"""
+﻿"""
 app.py
 
-Entry point for Hedra — the dynamic risk hedging dashboard.
+Entry point for Hedra â€” the dynamic risk hedging dashboard.
 
 Flow:
-    No token present  → authentication page
-    Token present     → dashboard home (system status + portfolio + sector chart)
-    Kite callback     → exchange request_token, save to .env, show dashboard home
+    No token present  â†’ authentication page
+    Token present     â†’ dashboard home (system status + portfolio + sector chart)
+    Kite callback     â†’ exchange request_token, save to .env, show dashboard home
 
 Run from the project root:
     streamlit run dashboard/app.py
@@ -32,7 +32,11 @@ ENV_PATH   = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env
 
 IST               = timezone(timedelta(hours=5, minutes=30))
 ENTRY_DATE        = dt_date(2025, 4, 1)
-CAPITAL_PER_STOCK = 100_000  # ₹1,00,000 per stock → ₹10,00,000 total
+TOTAL_CAPITAL = 10_000_000        # ₹1,00,00,000 total simulation capital
+STOCK_ALLOCATION_RATIO = 0.80     # 80% invested in stocks
+MARGIN_RESERVE_RATIO = 0.20       # 20% reserved for futures margin
+STOCK_ALLOCATION = TOTAL_CAPITAL * STOCK_ALLOCATION_RATIO
+MARGIN_RESERVE = TOTAL_CAPITAL - STOCK_ALLOCATION
 
 PORTFOLIO = [
     ("RELIANCE",   "Energy"),
@@ -47,6 +51,8 @@ PORTFOLIO = [
     ("AXISBANK",   "Financials"),
 ]
 
+CAPITAL_PER_STOCK = STOCK_ALLOCATION / len(PORTFOLIO)
+
 SECTOR_COLOURS = {
     "Financials":  "#6c63ff",
     "Technology":  "#4ade80",
@@ -58,7 +64,7 @@ SECTOR_COLOURS = {
 
 st.set_page_config(
     page_title="Hedra",
-    page_icon="⬡",
+    page_icon="â¬¡",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -67,7 +73,7 @@ if "sidebar_open" not in st.session_state:
     st.session_state.sidebar_open = True
 
 
-# ── XIRR ─────────────────────────────────────────────────────────────────────
+# â”€â”€ XIRR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def xirr(cashflows, dates):
     """
@@ -91,7 +97,7 @@ def xirr(cashflows, dates):
         return None
 
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# â”€â”€ CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def get_css(auth_page=False):
     sidebar_width = "280px" if st.session_state.sidebar_open else "72px"
@@ -208,7 +214,7 @@ div[data-testid="stButton"] button {{
 """
 
 
-# ── Auth HTML ─────────────────────────────────────────────────────────────────
+# â”€â”€ Auth HTML â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 AUTH_CARD_TOP = """
 <div class="page-wrap"><div class="auth-card">
@@ -239,7 +245,7 @@ AUTH_CARD_BOTTOM = """
 """
 
 
-# ── Kite helpers ──────────────────────────────────────────────────────────────
+# â”€â”€ Kite helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def exchange_and_save_token(request_token):
     kite         = KiteConnect(api_key=API_KEY)
@@ -266,7 +272,7 @@ def verify_token(kite):
         return False, str(e)
 
 
-# ── Auth page ─────────────────────────────────────────────────────────────────
+# â”€â”€ Auth page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_auth_page(state="login", token=None, error=None):
     st.markdown(get_css(auth_page=True), unsafe_allow_html=True)
@@ -299,13 +305,13 @@ def render_auth_page(state="login", token=None, error=None):
     st.markdown(AUTH_CARD_TOP + body + AUTH_CARD_BOTTOM, unsafe_allow_html=True)
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_custom_sidebar(profile, token_valid=True):
-    name  = escape(profile.get("user_name", "—")) if profile else "—"
-    email = escape(profile.get("email", "—"))     if profile else "—"
+    name  = escape(profile.get("user_name", "â€”")) if profile else "â€”"
+    email = escape(profile.get("email", "â€”"))     if profile else "â€”"
 
-    if st.button("☰", key="sidebar_toggle"):
+    if st.button("\u2630", key="sidebar_toggle"):
         st.session_state.sidebar_open = not st.session_state.sidebar_open
         st.rerun()
 
@@ -347,7 +353,7 @@ def render_custom_sidebar(profile, token_valid=True):
     st.markdown(sidebar_html, unsafe_allow_html=True)
 
 
-# ── Sector pie chart ──────────────────────────────────────────────────────────
+# â”€â”€ Sector pie chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_sector_pie(sector_totals):
     sectors = list(sector_totals.keys())
@@ -418,7 +424,7 @@ def render_sector_pie(sector_totals):
     )
 
 
-# ── Dashboard home ────────────────────────────────────────────────────────────
+# â”€â”€ Dashboard home â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_dashboard_home(kite, profile):
     st.markdown(get_css(auth_page=False), unsafe_allow_html=True)
@@ -426,9 +432,9 @@ def render_dashboard_home(kite, profile):
 
     now        = datetime.now(IST).strftime("%d %b %Y, %H:%M IST")
     token_raw  = os.getenv("KITE_ACCESS_TOKEN", "")
-    tok_prev   = (token_raw[:8] + "&#8226;&#8226;&#8226;&#8226;" + token_raw[-4:]) if token_raw else "—"
-    user_name  = escape(profile.get("user_name", "—"))
-    user_email = escape(profile.get("email", "—"))
+    tok_prev   = (token_raw[:8] + "&#8226;&#8226;&#8226;&#8226;" + token_raw[-4:]) if token_raw else "â€”"
+    user_name  = escape(profile.get("user_name", "â€”"))
+    user_email = escape(profile.get("email", "â€”"))
 
     st.markdown(
         "<p class='page-title'>Overview</p>"
@@ -436,7 +442,7 @@ def render_dashboard_home(kite, profile):
         unsafe_allow_html=True,
     )
 
-    # ── Status cards ──────────────────────────────────────────────────────────
+    # â”€â”€ Status cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
@@ -465,13 +471,13 @@ def render_dashboard_home(kite, profile):
         )
     with c4:
         st.markdown(
-            "<div class='stat-card'><div class='stat-label'>Portfolio Capital</div>"
-            "<div class='stat-value' style='font-size:16px;'>&#8377;10,00,000</div>"
-            "<div class='stat-meta'>Equal weight &middot; Entry 01 Apr 2025</div></div>",
+            "<div class='stat-card'><div class='stat-label'>Total Capital</div>"
+            "<div class='stat-value' style='font-size:16px;'>&#8377;" + "{:,.0f}".format(TOTAL_CAPITAL) + "</div>"
+            "<div class='stat-meta'>Stocks 80% &middot; Margin reserve 20%</div></div>",
             unsafe_allow_html=True,
         )
 
-    # ── Portfolio + Sector chart ──────────────────────────────────────────────
+    # â”€â”€ Portfolio + Sector chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     st.markdown(
         "<div class='section-header'>Portfolio &mdash; Nifty 50 Constituents</div>",
         unsafe_allow_html=True,
@@ -535,7 +541,7 @@ def render_dashboard_home(kite, profile):
         )
         return
 
-    # ── Compute portfolio totals before rendering columns ─────────────────────
+    # â”€â”€ Compute portfolio totals before rendering columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     total_cost = sum(s["cost"] for s in quote_data if s["cost"])
     total_curr = sum(s["curr"] for s in quote_data if s["curr"])
     total_pnl  = total_curr - total_cost
@@ -547,12 +553,12 @@ def render_dashboard_home(kite, profile):
     )
     pnl_col   = "#4ade80" if total_pnl >= 0 else "#f87171"
     pnl_sign  = "+" if total_pnl >= 0 else ""
-    xirr_html = f"{pnl_sign}{xirr_val:.1f}% p.a." if xirr_val is not None else "—"
+    xirr_html = f"{pnl_sign}{xirr_val:.1f}% p.a." if xirr_val is not None else "â€”"
     xirr_col  = "#4ade80" if xirr_val and xirr_val >= 0 else "#f87171"
 
     col_portfolio, col_chart = st.columns([3, 2])
 
-    # ── Left: portfolio table ─────────────────────────────────────────────────
+    # â”€â”€ Left: portfolio table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     with col_portfolio:
         def portfolio_row(item):
             pct      = item["pct"]
@@ -603,7 +609,7 @@ def render_dashboard_home(kite, profile):
             unsafe_allow_html=True,
         )
 
-    # ── Right: summary at top, pie chart below ────────────────────────────────
+    # â”€â”€ Right: summary at top, pie chart below â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     with col_chart:
         # Portfolio summary card
         st.markdown(
@@ -655,7 +661,7 @@ def render_dashboard_home(kite, profile):
         # Sector pie chart below summary
         render_sector_pie(sector_totals)
 
-    # ── Last hedge decision ───────────────────────────────────────────────────
+    # â”€â”€ Last hedge decision â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     st.markdown(
         "<div class='section-header'>Last Hedge Decision</div>",
         unsafe_allow_html=True,
@@ -669,14 +675,14 @@ def render_dashboard_home(kite, profile):
         log_df = pd.read_csv(log_path)
         if not log_df.empty:
             last = log_df.iloc[-1]
-            rc   = str(last.get("risk_class", "—")).lower()
+            rc   = str(last.get("risk_class", "â€”")).lower()
             rcol = {"low": "#4ade80", "medium": "#fbbf24", "high": "#f87171"}.get(rc, "#9090a0")
 
             d1, d2, d3, d4 = st.columns(4)
             with d1:
                 st.markdown(
                     "<div class='stat-card'><div class='stat-label'>Date</div>"
-                    "<div class='stat-value-sm'>" + str(last.get("date", "—")) + "</div></div>",
+                    "<div class='stat-value-sm'>" + str(last.get("date", "â€”")) + "</div></div>",
                     unsafe_allow_html=True,
                 )
             with d2:
@@ -689,13 +695,13 @@ def render_dashboard_home(kite, profile):
             with d3:
                 st.markdown(
                     "<div class='stat-card'><div class='stat-label'>Hedge Action</div>"
-                    "<div class='stat-value-sm'>" + str(last.get("hedge_action", "—")) + "</div></div>",
+                    "<div class='stat-value-sm'>" + str(last.get("hedge_action", "â€”")) + "</div></div>",
                     unsafe_allow_html=True,
                 )
             with d4:
                 st.markdown(
                     "<div class='stat-card'><div class='stat-label'>Hedge Ratio</div>"
-                    "<div class='stat-value'>" + str(last.get("hedge_ratio", "—")) + "</div></div>",
+                    "<div class='stat-value'>" + str(last.get("hedge_ratio", "â€”")) + "</div></div>",
                     unsafe_allow_html=True,
                 )
             return
@@ -709,7 +715,7 @@ def render_dashboard_home(kite, profile):
     )
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def main():
     if not API_KEY or not API_SECRET:
@@ -751,3 +757,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
