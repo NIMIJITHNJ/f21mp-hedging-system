@@ -76,6 +76,52 @@ SECTOR_COLOURS = {
     "FMCG":        "#a78bfa",
 }
 
+
+DISPLAY_LABELS = {
+    "OPEN_HEDGE": "Open Hedge",
+    "INCREASE_HEDGE": "Increase Hedge",
+    "REDUCE_HEDGE": "Reduce Hedge",
+    "CLOSE_HEDGE": "Close Hedge",
+    "HOLD_POSITION": "Hold Position",
+    "ROLL_FUTURES_FORWARD": "Roll Futures Forward",
+
+    "SELL_TO_OPEN_SHORT_FUTURES": "Sell to Open Short Futures",
+    "SELL_ADDITIONAL_SHORT_FUTURES": "Sell Additional Short Futures",
+    "BUY_TO_REDUCE_SHORT_FUTURES": "Buy to Reduce Short Futures",
+    "BUY_TO_CLOSE_SHORT_FUTURES": "Buy to Close Short Futures",
+    "HOLD_EXISTING_SHORT_POSITION": "Hold Existing Short Position",
+    "DO_NOT_EXECUTE_INSUFFICIENT_MARGIN": "Do Not Execute - Insufficient Margin",
+
+    "no_hedge": "No Hedge",
+    "static_50": "Static 50% Hedge",
+    "rolling_min_variance": "Rolling Minimum Variance",
+    "gjr_scaled_minvar": "GJR-Scaled Minimum Variance",
+    "gjr_regime_dynamic": "GJR Regime Dynamic",
+    "dcc_raw": "DCC Raw",
+    "dcc_ema20_band0p10": "DCC EMA(20) + 10% No-Trade Band",
+    "dcc_ema20_band0p05": "DCC EMA(20) + 5% No-Trade Band",
+    "dcc_ema10_band0p10": "DCC EMA(10) + 10% No-Trade Band",
+    "literature_vecm_static": "Literature VECM Static",
+    "portfolio_static_minvar": "Portfolio Static Minimum Variance",
+}
+
+
+def ui_label(value):
+    if value is None:
+        return "N/A"
+    raw = str(value).strip()
+    if raw in DISPLAY_LABELS:
+        return DISPLAY_LABELS[raw]
+    return raw.replace("_", " ").replace("-", " ").title()
+
+
+def ui_text(value):
+    text_value = str(value)
+    for raw, clean in sorted(DISPLAY_LABELS.items(), key=lambda item: len(item[0]), reverse=True):
+        text_value = text_value.replace(raw, clean)
+    return text_value.replace("_", " ")
+
+
 st.set_page_config(
     page_title="Hedra",
     page_icon="â¬¡",
@@ -951,8 +997,8 @@ def render_live_hedge_plan(kite):
 
         "<div>"
         "<div class='stat-label'>Planner Action</div>"
-        "<div class='stat-value-sm' style='color:" + action_colour + ";'>" + escape(str(result.position_action)) + "</div>"
-        "<div class='stat-meta'>" + escape(str(result.execution_instruction)) + "</div>"
+        "<div class='stat-value-sm' style='color:" + action_colour + ";'>" + escape(ui_label(result.position_action)) + "</div>"
+        "<div class='stat-meta'>" + escape(ui_label(result.execution_instruction)) + "</div>"
         "</div>"
 
         "<div>"
@@ -1011,8 +1057,8 @@ def render_live_hedge_plan(kite):
     plan_lines = get_result_field(planning, 'explanation', []) or []
     exec_lines = get_result_field(execution, 'explanation', []) or []
 
-    plan_html = "".join("<li>" + escape(str(line)) + "</li>" for line in plan_lines)
-    exec_html = "".join("<li>" + escape(str(line)) + "</li>" for line in exec_lines)
+    plan_html = "".join("<li>" + escape(ui_text(line)) + "</li>" for line in plan_lines)
+    exec_html = "".join("<li>" + escape(ui_text(line)) + "</li>" for line in exec_lines)
 
     st.markdown(
         "<div class='section-header'>Planner Explanation</div>"
@@ -1025,6 +1071,252 @@ def render_live_hedge_plan(kite):
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+
+def get_backtest_dataset_catalog():
+    return {
+        "Rolling hedge performance": {
+            "summary": "outputs/reports/hedge_performance/hedge_performance_summary.csv",
+            "daily": "outputs/reports/hedge_performance/hedge_performance_daily_details.csv",
+            "ratio": "outputs/reports/hedge_performance/hedge_ratio_series.csv",
+            "description": "Baseline hedge strategies including no hedge, static hedge, rolling minimum-variance, and GJR-scaled hedge ratios.",
+        },
+        "DCC-GJR-GARCH benchmark": {
+            "summary": "outputs/reports/dcc_garch/dcc_garch_performance_summary.csv",
+            "daily": "outputs/reports/dcc_garch/dcc_garch_daily_details.csv",
+            "ratio": "outputs/reports/dcc_garch/dcc_garch_ratio_series.csv",
+            "description": "Dynamic conditional correlation benchmark using DCC-GJR-GARCH hedge ratios.",
+        },
+        "DCC smoothing and no-trade-band benchmark": {
+            "summary": "outputs/reports/dcc_smoothing/dcc_smoothing_performance_summary.csv",
+            "daily": "outputs/reports/dcc_smoothing/dcc_smoothing_daily_details.csv",
+            "ratio": "outputs/reports/dcc_smoothing/dcc_smoothing_ratio_series.csv",
+            "description": "Smoothed DCC hedge ratios with EMA and no-trade-band variants for turnover control.",
+        },
+    }
+
+
+@st.cache_data(show_spinner=False)
+def load_backtest_csv(path_text):
+    path = Path(path_text)
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
+def safe_metric_value(df, column, mode="min"):
+    if df.empty or column not in df.columns:
+        return None
+    clean = df.dropna(subset=[column])
+    if clean.empty:
+        return None
+    if mode == "max":
+        return clean.loc[clean[column].idxmax()]
+    return clean.loc[clean[column].idxmin()]
+
+
+def render_backtest_evaluation():
+    st.markdown(
+        "<div class='section-header'>Historical Benchmark Evaluation</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>Benchmark module</div>"
+        "<div class='placeholder-text'>"
+        "This section compares saved benchmark hedge strategies such as no hedge, static hedge, rolling minimum-variance, "
+        "DCC-GARCH, and smoothed DCC no-trade-band variants. The planning-based historical hedge replay is handled separately "
+        "through the Hedge Plan workflow."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    catalog = get_backtest_dataset_catalog()
+    dataset_name = st.selectbox(
+        "Backtest dataset",
+        list(catalog.keys()),
+        key="backtest_dataset_select",
+    )
+
+    config = catalog[dataset_name]
+    summary_df = load_backtest_csv(config["summary"])
+    daily_df = load_backtest_csv(config["daily"])
+    ratio_df = load_backtest_csv(config["ratio"])
+
+    if summary_df.empty:
+        st.markdown(
+            "<div class='hedge-panel'><div class='placeholder-title'>Dataset unavailable</div>"
+            "<div class='placeholder-text'>The selected backtest summary file could not be loaded.</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    best_vol = safe_metric_value(summary_df, "volatility_pct", "min")
+    best_dd = safe_metric_value(summary_df, "max_drawdown_pct", "max")
+    best_rank = safe_metric_value(summary_df, "balanced_rank_score", "min")
+    no_hedge = summary_df[summary_df["label"].astype(str).str.lower().eq("no_hedge")]
+    no_hedge_row = no_hedge.iloc[0] if not no_hedge.empty else None
+
+    def row_label(row):
+        if row is None:
+            return "N/A"
+        return escape(ui_label(row.get("label", "N/A")))
+
+    def row_value(row, column, suffix=""):
+        if row is None or column not in row:
+            return "N/A"
+        try:
+            return f"{float(row[column]):,.2f}{suffix}"
+        except Exception:
+            return escape(str(row[column]))
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Dataset</div>"
+        "<div class='stat-value-sm'>" + escape(dataset_name) + "</div>"
+        "<div class='stat-meta'>" + escape(config["description"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Lowest Volatility</div>"
+        "<div class='stat-value-sm'>" + row_label(best_vol) + "</div>"
+        "<div class='stat-meta'>" + row_value(best_vol, "volatility_pct", "%") + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Lowest Drawdown</div>"
+        "<div class='stat-value-sm'>" + row_label(best_dd) + "</div>"
+        "<div class='stat-meta'>" + row_value(best_dd, "max_drawdown_pct", "%") + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>No-Hedge Return</div>"
+        "<div class='stat-value-sm'>" + row_value(no_hedge_row, "total_return_pct", "%") + "</div>"
+        "<div class='stat-meta'>Reference baseline</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    strategies = list(summary_df["label"].astype(str).unique())
+    preferred = [
+        "no_hedge",
+        "static_50",
+        "rolling_min_variance",
+        "gjr_scaled_minvar",
+        "dcc_raw",
+        "dcc_ema20_band0p10",
+    ]
+    default_strategies = [s for s in preferred if s in strategies]
+    if not default_strategies:
+        default_strategies = strategies[: min(5, len(strategies))]
+
+    selected_strategies = st.multiselect(
+        "Strategies to display",
+        strategies,
+        default=default_strategies,
+        format_func=ui_label,
+        key="backtest_strategy_multiselect",
+    )
+
+    display_cols = [
+        "label",
+        "total_return_pct",
+        "annual_return_pct",
+        "volatility_pct",
+        "sharpe",
+        "max_drawdown_pct",
+        "cvar_95_pct",
+        "average_hedge_ratio",
+        "average_daily_turnover",
+        "total_transaction_cost_pct",
+        "hedging_effectiveness",
+    ]
+    display_cols = [c for c in display_cols if c in summary_df.columns]
+    table_df = summary_df[summary_df["label"].astype(str).isin(selected_strategies)][display_cols].copy()
+
+    if "label" in table_df.columns:
+        table_df.insert(0, "Strategy", table_df["label"].apply(ui_label))
+        table_df = table_df.drop(columns=["label"])
+
+    readable_columns = {
+        "total_return_pct": "Total Return (%)",
+        "annual_return_pct": "Annual Return (%)",
+        "volatility_pct": "Volatility (%)",
+        "sharpe": "Sharpe",
+        "max_drawdown_pct": "Max Drawdown (%)",
+        "cvar_95_pct": "CVaR 95% (%)",
+        "average_hedge_ratio": "Average Hedge Ratio",
+        "average_daily_turnover": "Average Daily Turnover",
+        "total_transaction_cost_pct": "Transaction Cost (%)",
+        "hedging_effectiveness": "Hedging Effectiveness",
+    }
+    table_df = table_df.rename(columns=readable_columns)
+
+    st.markdown(
+        "<div class='section-header'>Strategy Comparison</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(table_df, width="stretch", hide_index=True)
+
+    if not daily_df.empty and {"date", "strategy", "hedged_return_net"}.issubset(daily_df.columns):
+        chart_df = daily_df[daily_df["strategy"].astype(str).isin(selected_strategies)].copy()
+        chart_df["date"] = pd.to_datetime(chart_df["date"], errors="coerce")
+        chart_df = chart_df.dropna(subset=["date"])
+
+        pivot = chart_df.pivot_table(
+            index="date",
+            columns="strategy",
+            values="hedged_return_net",
+            aggfunc="first",
+        ).sort_index()
+
+        cumulative = ((1 + pivot.fillna(0)).cumprod() - 1) * 100
+        cumulative_display = cumulative.rename(
+            columns={col: ui_label(col) for col in cumulative.columns}
+        )
+
+        st.markdown(
+            "<div class='section-header'>Cumulative Net Return</div>",
+            unsafe_allow_html=True,
+        )
+        st.line_chart(cumulative_display, width="stretch")
+
+    if not ratio_df.empty and "date" in ratio_df.columns:
+        ratio_plot = ratio_df.copy()
+        ratio_plot["date"] = pd.to_datetime(ratio_plot["date"], errors="coerce")
+        ratio_plot = ratio_plot.dropna(subset=["date"]).set_index("date")
+
+        ratio_options = [c for c in ratio_plot.columns if pd.api.types.is_numeric_dtype(ratio_plot[c])]
+        ratio_defaults = [s for s in selected_strategies if s in ratio_options]
+        if not ratio_defaults:
+            ratio_defaults = ratio_options[: min(5, len(ratio_options))]
+
+        selected_ratio_cols = st.multiselect(
+            "Hedge ratio series",
+            ratio_options,
+            default=ratio_defaults,
+            format_func=ui_label,
+            key="backtest_ratio_multiselect",
+        )
+
+        if selected_ratio_cols:
+            ratio_display = ratio_plot[selected_ratio_cols].rename(
+                columns={col: ui_label(col) for col in selected_ratio_cols}
+            )
+
+            st.markdown(
+                "<div class='section-header'>Historical Hedge Ratio Series</div>",
+                unsafe_allow_html=True,
+            )
+            st.line_chart(ratio_display, width="stretch")
 
 
 
@@ -1072,7 +1364,7 @@ def render_dashboard_home(kite, profile):
         "ML Prediction",
         "Hedge Plan",
         "Explanation",
-        "Backtest Evaluation",
+        "Benchmark Evaluation",
         "Audit Log",
     ])
 
@@ -1122,10 +1414,13 @@ def render_dashboard_home(kite, profile):
         )
 
     with tab_eval:
-        render_placeholder_section(
-            "Backtest Evaluation",
-            "This tab will compare no hedge, static hedge, rolling hedge, DCC hedge, smoothed DCC, no-trade-band, and planning-based results."
-        )
+        if mode == "Historical Backtesting":
+            render_backtest_evaluation()
+        else:
+            render_placeholder_section(
+                "Benchmark Evaluation",
+                "Switch to Historical Backtesting mode to load actual saved backtest results and strategy comparisons."
+            )
 
     with tab_audit:
         render_placeholder_section(
