@@ -605,13 +605,110 @@ def render_live_overview_summary():
         "</div>"
         "<div style='height:1px;background:#2a2a30;margin:20px 0;'></div>"
         "<div class='placeholder-text'>"
-        "<strong style='color:#f0f0f5;'>Next integration:</strong> this landing page will show the latest planner action, "
-        "target hedge ratio, recommended short futures contracts, margin required, and achieved hedge ratio. "
-        "The detailed output will be shown in the Hedge Plan tab."
+        "<strong>Hedge decision workflow:</strong> the Overview shows the latest live decision summary. "
+        "Detailed planner reasoning, futures contract sizing, margin checks, and execution traces are available in the Hedge Plan tab."
         "</div>"
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+
+def render_live_decision_summary(kite):
+    st.markdown(
+        "<div class='section-header'>Live Decision Summary</div>",
+        unsafe_allow_html=True,
+    )
+
+    if "live_hedge_plan_cache" not in st.session_state:
+        with st.spinner("Preparing latest live hedge decision ..."):
+            try:
+                snapshot, item, result, inputs = build_live_hedge_plan(kite)
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": snapshot,
+                    "item": item,
+                    "result": result,
+                    "inputs": inputs,
+                    "error": None,
+                }
+            except Exception as exc:
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": None,
+                    "item": None,
+                    "result": None,
+                    "inputs": None,
+                    "error": str(exc),
+                }
+
+    cache = st.session_state.live_hedge_plan_cache
+
+    if cache.get("error"):
+        st.markdown(
+            "<div style='background:#1a0808;border:1px solid #4a1a1a;border-radius:8px;"
+            "padding:14px 16px;font-size:13px;color:#f87171;'>"
+            "Live decision summary unavailable: " + escape(cache["error"]) + "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    snapshot = cache["snapshot"]
+    result = cache["result"]
+    inputs = cache["inputs"]
+    execution = result.futures_execution_result
+
+    action = ui_label(result.position_action)
+    instruction = ui_label(result.execution_instruction)
+    risk_regime = str(inputs.get("risk_regime", "N/A")).title()
+    target_ratio = float(result.execution_target_hedge_ratio)
+    achieved_ratio = float(get_result_field(execution, "achieved_hedge_ratio", 0.0))
+    target_contracts = int(result.recommended_short_contracts)
+    current_contracts = int(result.current_short_contracts)
+    trade_now = int(result.contract_delta)
+    margin_required = get_result_field(execution, "additional_margin_required", 0.0)
+    margin_status = "Sufficient" if result.margin_sufficient else "Insufficient"
+    margin_colour = "#4ade80" if result.margin_sufficient else "#f87171"
+
+    trade_text = "No trade" if trade_now == 0 else f"{trade_now:+d} contracts"
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(5,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Planner Action</div>"
+        "<div class='stat-value-sm'>" + escape(action) + "</div>"
+        "<div class='stat-meta'>" + escape(instruction) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Risk Regime</div>"
+        "<div class='stat-value-sm'>" + escape(risk_regime) + "</div>"
+        "<div class='stat-meta'>Predicted volatility: " + f"{inputs.get('predicted_volatility', 0.0):.2%}" + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Hedra Target Ratio</div>"
+        "<div class='stat-value-sm'>" + f"{target_ratio:.2%}" + "</div>"
+        "<div class='stat-meta'>Achieved: " + f"{achieved_ratio:.2%}" + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Target Position</div>"
+        "<div class='stat-value-sm'>" + str(target_contracts) + " short FUT</div>"
+        "<div class='stat-meta'>Current: " + str(current_contracts) + " &middot; Trade now: " + escape(trade_text) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Margin Status</div>"
+        "<div class='stat-value-sm' style='color:" + margin_colour + ";'>" + margin_status + "</div>"
+        "<div class='stat-meta'>Required: " + format_money_html(margin_required, 0) + "</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
 
 
 def render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_email):
@@ -652,6 +749,8 @@ def render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_
 
     # â”€â”€ Portfolio + Sector chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     render_live_overview_summary()
+    render_live_decision_summary(kite)
+    return
 
     st.markdown(
         "<div class='section-header'>Last Hedge Decision</div>",
@@ -700,7 +799,7 @@ def render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_
     st.markdown(
         "<div class='hedge-panel'>"
         "<div class='hedge-placeholder'>"
-        "No hedge decisions yet &mdash; model pipeline not yet active"
+        "Open the Hedge Plan tab to view the latest live or historical hedge recommendation."
         "</div></div>",
         unsafe_allow_html=True,
     )
