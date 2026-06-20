@@ -15,6 +15,7 @@ Run from the project root:
 import os
 import sys
 import math
+import re
 from pathlib import Path
 from datetime import datetime, timezone, timedelta, date as dt_date
 from html import escape
@@ -109,9 +110,21 @@ DISPLAY_LABELS = {
 def ui_label(value):
     if value is None:
         return "N/A"
+
     raw = str(value).strip()
+
     if raw in DISPLAY_LABELS:
         return DISPLAY_LABELS[raw]
+
+    dcc_match = re.match(r"^dcc_ema(\d+)_band0p(\d+)$", raw)
+    if dcc_match:
+        ema_window = dcc_match.group(1)
+        band_pct = int(dcc_match.group(2))
+        return f"DCC EMA({ema_window}) + {band_pct}% No-Trade Band"
+
+    if raw == "dcc_raw":
+        return "Raw DCC-GARCH Hedge"
+
     return raw.replace("_", " ").replace("-", " ").title()
 
 
@@ -1116,6 +1129,439 @@ def safe_metric_value(df, column, mode="min"):
     return clean.loc[clean[column].idxmin()]
 
 
+@st.cache_data(show_spinner=False)
+def load_historical_replay_inputs():
+    ratio_core = load_backtest_csv("outputs/reports/hedge_performance/hedge_ratio_series.csv")
+    ratio_dcc = load_backtest_csv("outputs/reports/dcc_smoothing/dcc_smoothing_ratio_series.csv")
+    futures = load_backtest_csv("data/raw/NIFTY_futures_continuous.csv")
+    lot_schedule = load_backtest_csv("data/reference/nifty_lot_size_schedule.csv")
+    predictions = load_backtest_csv("outputs/reports/regression_walkforward/regression_walkforward_predictions.csv")
+    return ratio_core, ratio_dcc, futures, lot_schedule, predictions
+
+
+def get_lot_size_for_date(lot_schedule, selected_date):
+    if lot_schedule.empty:
+        return 65, "Fallback lot size used because the lot-size schedule file is unavailable."
+
+    schedule = lot_schedule.copy()
+    schedule["effective_from"] = pd.to_datetime(schedule["effective_from"]).dt.date
+    schedule["effective_to"] = pd.to_datetime(schedule["effective_to"]).dt.date
+
+    selected = pd.to_datetime(selected_date).date()
+    matched = schedule[
+        (schedule["effective_from"] <= selected)
+        & (schedule["effective_to"] >= selected)
+    ]
+
+    if matched.empty:
+        return 65, "Fallback lot size used because no schedule row matched the selected date."
+
+    row = matched.iloc[0]
+    return int(row["lot_size"]), str(row.get("source_note", "Historical lot-size schedule."))
+
+
+def infer_historical_planner_action(previous_ratio, target_ratio):
+    previous_ratio = 0.0 if pd.isna(previous_ratio) else float(previous_ratio)
+    target_ratio = 0.0 if pd.isna(target_ratio) else float(target_ratio)
+    delta = target_ratio - previous_ratio
+
+    if target_ratio < 0.05:
+        return "CLOSE_HEDGE" if previous_ratio >= 0.05 else "HOLD_POSITION"
+    if previous_ratio < 0.05:
+        return "OPEN_HEDGE"
+    if delta > 0.05:
+        return "INCREASE_HEDGE"
+    if delta < -0.05:
+        return "REDUCE_HEDGE"
+    return "HOLD_POSITION"
+
+
+def infer_historical_trade_action(previous_contracts, target_contracts):
+    """Infer planner action from the change in target futures position."""
+    previous_contracts = int(previous_contracts)
+    target_contracts = int(target_contracts)
+    delta = target_contracts - previous_contracts
+
+    if target_contracts == 0 and previous_contracts > 0:
+        return "CLOSE_HEDGE"
+    if previous_contracts == 0 and target_contracts > 0:
+        return "OPEN_HEDGE"
+    if delta > 0:
+        return "INCREASE_HEDGE"
+    if delta < 0:
+        return "REDUCE_HEDGE"
+    return "HOLD_POSITION"
+
+
+def get_historical_prediction(predictions, selected_date):
+    if predictions.empty or "date" not in predictions.columns or "prediction" not in predictions.columns:
+        return None, "Not available"
+
+    pred = predictions.copy()
+    pred["date"] = pd.to_datetime(pred["date"])
+    selected_ts = pd.to_datetime(selected_date)
+
+    pred = pred[pred["date"] <= selected_ts]
+    if pred.empty:
+        return None, "Not available"
+
+    # Prefer the dissertation horizon of 10 trading days when available.
+    if "horizon" in pred.columns:
+        horizon_10 = pred[pred["horizon"] == 10]
+        if not horizon_10.empty:
+            pred = horizon_10
+
+    latest_date = pred["date"].max()
+    latest = pred[pred["date"] == latest_date]
+    prediction_value = float(latest["prediction"].median())
+
+    if prediction_value < 0.109575:
+        regime = "Low"
+    elif prediction_value >= 0.153290:
+        regime = "High"
+    else:
+        regime = "Medium"
+
+    return prediction_value, regime
+
+
+def apply_hedra_risk_gate(candidate_ratio, risk_regime):
+    """Convert a benchmark hedge ratio into the final Hedra target ratio.
+
+    The benchmark ratio acts as a candidate hedge level. The final system
+    gates that ratio using the predicted risk regime so that the system does
+    not over-hedge in low-risk periods.
+    """
+    if candidate_ratio is None or pd.isna(candidate_ratio):
+        candidate_ratio = 0.0
+
+    candidate_ratio = max(float(candidate_ratio), 0.0)
+    regime = str(risk_regime).strip().lower()
+
+    if regime == "low":
+        return 0.0, "Low-risk regime: close or avoid hedge exposure."
+
+    if regime == "medium":
+        return min(candidate_ratio, 0.50), "Medium-risk regime: allow a moderate hedge capped at 50%."
+
+    if regime == "high":
+        return min(candidate_ratio, 0.80), "High-risk regime: allow stronger hedge exposure capped at 80%."
+
+    return min(candidate_ratio, 0.50), "Prediction unavailable: conservative hedge cap of 50% applied."
+
+
+def render_historical_hedge_plan_replay():
+    st.markdown(
+        "<div class='section-header'>Historical Hedge Plan Replay</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>Planner replay from historical hedge ratios</div>"
+        "<div class='placeholder-text'>"
+        "This replay translates saved historical hedge ratios into the same decision style used by the live system. "
+        "It uses historical NIFTY futures close prices and the lot-size schedule to estimate contract value, "
+        "recommended futures contracts, margin requirement, and planner action for a selected date."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    ratio_core, ratio_dcc, futures, lot_schedule, predictions = load_historical_replay_inputs()
+
+    ratio_sources = {
+        "Core hedge benchmark ratios": ratio_core,
+        "DCC smoothing / no-trade-band ratios": ratio_dcc,
+    }
+
+    selected_source_name = st.selectbox(
+        "Historical hedge-ratio source",
+        list(ratio_sources.keys()),
+        key="historical_replay_ratio_source",
+    )
+
+    ratio_df = ratio_sources[selected_source_name].copy()
+
+    if ratio_df.empty:
+        st.warning("The selected hedge-ratio dataset could not be loaded.")
+        return
+
+    if futures.empty:
+        st.warning("Historical NIFTY futures data could not be loaded.")
+        return
+
+    ratio_df["date"] = pd.to_datetime(ratio_df["date"])
+    futures = futures.copy()
+    futures["date"] = pd.to_datetime(futures["date"])
+
+    strategy_cols = [col for col in ratio_df.columns if col != "date"]
+
+    default_strategy = (
+        "gjr_scaled_minvar"
+        if "gjr_scaled_minvar" in strategy_cols
+        else "dcc_ema20_band0p10"
+        if "dcc_ema20_band0p10" in strategy_cols
+        else strategy_cols[0]
+    )
+
+    default_strategy_index = strategy_cols.index(default_strategy)
+
+    date_options = sorted(ratio_df["date"].dt.strftime("%Y-%m-%d").unique().tolist())
+    default_date = "2024-12-30" if "2024-12-30" in date_options else date_options[-1]
+    default_date_index = date_options.index(default_date)
+
+    control_left, control_right = st.columns(2)
+
+    with control_left:
+        selected_date = st.selectbox(
+            "Historical date",
+            date_options,
+            index=default_date_index,
+            key="historical_replay_date",
+        )
+
+    with control_right:
+        selected_strategy = st.selectbox(
+            "Candidate hedge-ratio model",
+            strategy_cols,
+            index=default_strategy_index,
+            format_func=ui_label,
+            key="historical_replay_strategy",
+        )
+
+    selected_ts = pd.to_datetime(selected_date)
+
+    selected_row = ratio_df[ratio_df["date"] == selected_ts]
+    if selected_row.empty:
+        st.warning("No hedge-ratio row was found for the selected date.")
+        return
+
+    raw_target_ratio = float(selected_row.iloc[0][selected_strategy])
+
+    previous_rows = ratio_df[ratio_df["date"] < selected_ts].sort_values("date")
+    raw_previous_ratio = (
+        float(previous_rows.iloc[-1][selected_strategy])
+        if not previous_rows.empty
+        else 0.0
+    )
+    previous_date_for_gate = (
+        previous_rows.iloc[-1]["date"]
+        if not previous_rows.empty
+        else selected_ts
+    )
+
+    predicted_vol, risk_regime = get_historical_prediction(predictions, selected_date)
+    previous_predicted_vol, previous_risk_regime = get_historical_prediction(
+        predictions,
+        previous_date_for_gate,
+    )
+
+    target_ratio, risk_gate_note = apply_hedra_risk_gate(raw_target_ratio, risk_regime)
+    previous_ratio, previous_gate_note = apply_hedra_risk_gate(
+        raw_previous_ratio,
+        previous_risk_regime,
+    )
+
+    futures_rows = futures[futures["date"] <= selected_ts].sort_values("date")
+    if futures_rows.empty:
+        st.warning("No historical futures price was found on or before the selected date.")
+        return
+
+    futures_row = futures_rows.iloc[-1]
+    futures_price = float(futures_row["close"])
+    futures_price_date = futures_row["date"].strftime("%Y-%m-%d")
+
+    previous_futures_rows = futures[futures["date"] <= previous_date_for_gate].sort_values("date")
+    previous_futures_row = previous_futures_rows.iloc[-1] if not previous_futures_rows.empty else futures_row
+    previous_futures_price = float(previous_futures_row["close"])
+    previous_futures_price_date = previous_futures_row["date"].strftime("%Y-%m-%d")
+
+    lot_size, lot_note = get_lot_size_for_date(lot_schedule, selected_date)
+    previous_lot_size, _ = get_lot_size_for_date(
+        lot_schedule,
+        pd.to_datetime(previous_date_for_gate).strftime("%Y-%m-%d"),
+    )
+
+    portfolio_exposure = 8_000_000.0
+    margin_reserve = 2_000_000.0
+    margin_rate = 0.12
+
+    contract_value = futures_price * lot_size
+    previous_contract_value = previous_futures_price * previous_lot_size
+
+    target_hedge_value = max(target_ratio, 0.0) * portfolio_exposure
+    previous_target_hedge_value = max(previous_ratio, 0.0) * portfolio_exposure
+
+    target_contracts = 0
+    if target_hedge_value > 0 and contract_value > 0:
+        target_contracts = int(round(target_hedge_value / contract_value))
+        if target_contracts == 0:
+            target_contracts = 1
+
+    previous_target_contracts = 0
+    if previous_target_hedge_value > 0 and previous_contract_value > 0:
+        previous_target_contracts = int(round(previous_target_hedge_value / previous_contract_value))
+        if previous_target_contracts == 0:
+            previous_target_contracts = 1
+
+    contracts_to_trade_now = target_contracts - previous_target_contracts
+    recommended_contracts = target_contracts
+
+    achieved_hedge_ratio = (
+        (target_contracts * contract_value) / portfolio_exposure
+        if portfolio_exposure > 0
+        else 0.0
+    )
+
+    margin_required = target_contracts * contract_value * margin_rate
+    margin_available_after_trade = margin_reserve - margin_required
+    margin_ok = margin_required <= margin_reserve
+
+    planner_action = infer_historical_trade_action(previous_target_contracts, target_contracts)
+
+    metric_cols = st.columns(5)
+
+    with metric_cols[0]:
+        st.markdown(
+            f"<div class='metric-card'><div class='metric-label'>Planner Action</div>"
+            f"<div class='metric-value'>{escape(ui_label(planner_action))}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with metric_cols[1]:
+        st.markdown(
+            f"<div class='metric-card'><div class='metric-label'>Hedra Target Ratio</div>"
+            f"<div class='metric-value'>{target_ratio:.2%}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with metric_cols[2]:
+        st.markdown(
+            f"<div class='metric-card'><div class='metric-label'>Target Hedge Contracts</div>"
+            f"<div class='metric-value'>{recommended_contracts}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with metric_cols[3]:
+        trade_label = f"{contracts_to_trade_now:+d}"
+        st.markdown(
+            f"<div class='metric-card'><div class='metric-label'>Contracts to Trade Now</div>"
+            f"<div class='metric-value'>{trade_label}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with metric_cols[4]:
+        margin_status = "Sufficient" if margin_ok else "Insufficient"
+        st.markdown(
+            f"<div class='metric-card'><div class='metric-label'>Margin Check</div>"
+            f"<div class='metric-value'>{margin_status}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    replay_summary = pd.DataFrame(
+        [
+            ["Selected date", selected_date],
+            ["Hedge-ratio source", selected_source_name],
+            ["Candidate hedge-ratio model", ui_label(selected_strategy)],
+            ["Risk regime source", "Regression walk-forward volatility prediction"],
+            ["Previous raw candidate hedge ratio", f"{raw_previous_ratio:.2%}"],
+            ["Previous Hedra target hedge ratio", f"{previous_ratio:.2%}"],
+            ["Raw candidate hedge ratio", f"{raw_target_ratio:.2%}"],
+            ["Hedra risk-gated target ratio", f"{target_ratio:.2%}"],
+            ["Risk gate rule", risk_gate_note],
+            ["Previous risk gate rule", previous_gate_note],
+            ["Achieved hedge ratio", f"{achieved_hedge_ratio:.2%}"],
+            ["Historical futures price date", futures_price_date],
+            ["Historical futures close", f"₹{futures_price:,.2f}"],
+            ["Historical lot size", f"{lot_size}"],
+            ["Estimated contract value", f"₹{contract_value:,.2f}"],
+            ["Target hedge value", f"₹{target_hedge_value:,.2f}"],
+            ["Previous target contracts", f"{previous_target_contracts}"],
+            ["Target hedge contracts", f"{target_contracts}"],
+            ["Contracts to trade now", f"{contracts_to_trade_now:+d}"],
+            ["Previous futures price date", previous_futures_price_date],
+            ["Estimated margin required", f"₹{margin_required:,.2f}"],
+            ["Margin reserve", f"₹{margin_reserve:,.2f}"],
+            ["Margin after trade", f"₹{margin_available_after_trade:,.2f}"],
+            ["Predicted volatility", "Not available" if predicted_vol is None else f"{predicted_vol:.2%}"],
+            ["Risk regime", risk_regime],
+            ["Lot-size note", lot_note],
+        ],
+        columns=["Field", "Value"],
+    )
+
+    st.markdown(
+        "<div class='section-header'>Replay Details</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(replay_summary, hide_index=True, width="stretch")
+
+    window_start = selected_ts - pd.Timedelta(days=120)
+    window_end = selected_ts + pd.Timedelta(days=30)
+    ratio_window = ratio_df[
+        (ratio_df["date"] >= window_start)
+        & (ratio_df["date"] <= window_end)
+    ][["date", selected_strategy]].copy()
+
+    if not ratio_window.empty:
+        chart_rows = []
+        for _, row in ratio_window.iterrows():
+            row_date = row["date"]
+            raw_ratio = float(row[selected_strategy])
+            _, row_regime = get_historical_prediction(predictions, row_date)
+            hedra_ratio, _ = apply_hedra_risk_gate(raw_ratio, row_regime)
+            chart_rows.append(
+                {
+                    "date": row_date,
+                    "Raw Candidate Hedge Ratio": raw_ratio,
+                    "Hedra Risk-Gated Target Ratio": hedra_ratio,
+                }
+            )
+
+        ratio_chart = pd.DataFrame(chart_rows).set_index("date")
+
+        st.markdown(
+            "<div class='section-header'>Raw Candidate vs Hedra Risk-Gated Target</div>",
+            unsafe_allow_html=True,
+        )
+        st.line_chart(ratio_chart, width="stretch")
+
+    trace_lines = [
+        f"Selected strategy is {ui_label(selected_strategy)} on {selected_date}.",
+        f"The raw candidate hedge ratio is {raw_target_ratio:.2%}.",
+        f"The predicted risk regime is {risk_regime}, so Hedra applies the rule: {risk_gate_note}",
+        f"The previous target position was {previous_target_contracts} contract(s), and the current target position is {target_contracts} contract(s).",
+        f"Contracts to trade now: {contracts_to_trade_now:+d}, so the inferred planner action is {ui_label(planner_action)}.",
+        f"The historical NIFTY futures close used is ₹{futures_price:,.2f} from {futures_price_date}.",
+        f"The lot size applied for this date is {lot_size}, giving an estimated contract value of ₹{contract_value:,.2f}.",
+        f"With ₹80,00,000 stock exposure, the Hedra target hedge value is ₹{target_hedge_value:,.2f}.",
+        f"The target hedge position is {target_contracts} short NIFTY futures contract(s), with estimated margin requirement of ₹{margin_required:,.2f}.",
+    ]
+
+    st.markdown(
+        "<div class='section-header'>Replay Explanation Trace</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-text'>"
+        "The selected hedge-ratio model provides only the candidate hedge size. "
+        "The risk regime is taken from the volatility prediction layer and is used by Hedra to gate the final hedge target."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div class='hedge-panel'>"
+        + "".join(
+            f"<div class='trace-line'>{escape(line)}</div>"
+            for line in trace_lines
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_backtest_evaluation():
     st.markdown(
         "<div class='section-header'>Historical Benchmark Evaluation</div>",
@@ -1402,10 +1848,7 @@ def render_dashboard_home(kite, profile):
         if mode == "Live Monitoring":
             render_live_hedge_plan(kite)
         else:
-            render_placeholder_section(
-                "Historical Hedge Plan",
-                "This tab will replay the planner action, hedge ratio, futures contracts, margin check, and explanation for the selected historical backtest point."
-            )
+            render_historical_hedge_plan_replay()
 
     with tab_explain:
         render_placeholder_section(
