@@ -37,6 +37,7 @@ from src.planning.run_planned_futures_execution import (
     PlannedExecutionInput,
     run_planned_execution,
 )
+from src.models.live_volatility_signal import get_live_volatility_signal
 
 
 load_dotenv()
@@ -438,6 +439,15 @@ def render_custom_sidebar(profile, token_valid=True):
     name  = escape(profile.get("user_name", "â€”")) if profile else "â€”"
     email = escape(profile.get("email", "â€”"))     if profile else "â€”"
 
+    token_raw = os.getenv("KITE_ACCESS_TOKEN", "")
+    token_preview = (
+        escape(token_raw[:8]) + "&#8226;&#8226;&#8226;&#8226;" + escape(token_raw[-4:])
+        if token_raw
+        else "Unavailable"
+    )
+    token_state = "Token active" if token_valid and token_raw else "Token unavailable"
+    capital_text = "&#8377;" + "{:,.0f}".format(TOTAL_CAPITAL)
+
     if st.button("\u2630", key="sidebar_toggle"):
         st.session_state.sidebar_open = not st.session_state.sidebar_open
         st.rerun()
@@ -456,16 +466,21 @@ def render_custom_sidebar(profile, token_valid=True):
             "<div class='sidebar-email'>" + email + "</div>"
             "<div class='sidebar-pill'><span class='sidebar-dot'></span><span>Token active</span></div>"
             "<div class='sidebar-line'></div>"
-            "<div class='sidebar-label'>System</div>"
-            "<div class='sidebar-page'>Live monitoring mode</div>"
-            "<div class='sidebar-page'>Historical backtesting mode</div>"
-            "<div class='sidebar-page'>Kite market data active</div>"
-            "<div class='sidebar-page'>Planner backend connected</div>"
-            "<div class='sidebar-page'>Futures execution layer</div>"
+            "<div class='sidebar-label'>Session</div>"
+            "<div class='sidebar-page'>Kite connection active</div>"
+            "<div class='sidebar-page'>Access token: " + token_preview + "</div>"
+            "<div class='sidebar-page'>" + token_state + "</div>"
+            "<div class='sidebar-page'>Refresh before 6:00 AM IST expiry</div>"
             "<div class='sidebar-line'></div>"
             "<div class='sidebar-label'>Capital Setup</div>"
-            "<div class='sidebar-page'>Total: &#8377;1,00,00,000</div>"
-            "<div class='sidebar-page'>Stocks 80% &middot; Margin 20%</div>"
+            "<div class='sidebar-page'>Total capital: " + capital_text + "</div>"
+            "<div class='sidebar-page'>Stocks 80% &middot; Margin reserve 20%</div>"
+            "<div class='sidebar-line'></div>"
+            "<div class='sidebar-label'>System Modules</div>"
+            "<div class='sidebar-page'>Kite market data</div>"
+            "<div class='sidebar-page'>GJR-GARCH ML signal</div>"
+            "<div class='sidebar-page'>Planner backend connected</div>"
+            "<div class='sidebar-page'>Futures execution layer</div>"
             "</div>"
         )
     else:
@@ -568,6 +583,158 @@ def render_placeholder_section(title, text):
     )
 
 
+
+def _parse_kite_datetime(value):
+    if value is None:
+        return None
+
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.to_pydatetime().replace(tzinfo=IST)
+
+    return parsed.tz_convert(IST).to_pydatetime()
+
+
+def get_kite_market_status(kite, quote_symbol="NSE:NIFTY 50", freshness_minutes=20):
+    """Determine market/feed status using actual Kite quote timestamps.
+
+    The live intraday signal is enabled only when:
+    1. Current IST time is inside the regular NSE cash-market window.
+    2. Kite quote timestamp is from today.
+    3. The quote timestamp is recent enough.
+    """
+
+    now = datetime.now(IST)
+    market_open_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close_time = now.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    is_weekday = now.weekday() < 5
+    is_regular_session = is_weekday and market_open_time <= now <= market_close_time
+
+    quote_timestamp = None
+    last_price = None
+    feed_error = None
+
+    try:
+        quote = kite.quote([quote_symbol]).get(quote_symbol, {})
+        quote_timestamp = _parse_kite_datetime(
+            quote.get("last_trade_time") or quote.get("timestamp")
+        )
+        last_price = quote.get("last_price")
+    except Exception as exc:
+        feed_error = str(exc)
+
+    quote_age_minutes = None
+    quote_is_today = False
+    feed_is_fresh = False
+
+    if quote_timestamp is not None:
+        quote_age_minutes = max((now - quote_timestamp).total_seconds() / 60.0, 0.0)
+        quote_is_today = quote_timestamp.date() == now.date()
+        feed_is_fresh = quote_is_today and quote_age_minutes <= freshness_minutes
+
+    intraday_enabled = is_regular_session and feed_is_fresh
+
+    if intraday_enabled:
+        status = "Open"
+        signal_label = "Live intraday signal active"
+        guidance = "Live intraday prediction is provisional and should be confirmed after market close."
+    elif not is_regular_session:
+        status = "Closed"
+        signal_label = "Live intraday signal disabled"
+        guidance = "Market is outside regular NSE trading hours. Use the latest confirmed end-of-day hedge plan."
+    elif feed_error:
+        status = "Feed unavailable"
+        signal_label = "Live intraday signal disabled"
+        guidance = "Kite quote data could not be fetched, so the intraday signal is disabled."
+    else:
+        status = "Feed stale"
+        signal_label = "Live intraday signal disabled"
+        guidance = "Kite quote data is not fresh enough for an intraday hedge signal."
+
+    return {
+        "status": status,
+        "is_open": intraday_enabled,
+        "intraday_enabled": intraday_enabled,
+        "signal_label": signal_label,
+        "guidance": guidance,
+        "quote_symbol": quote_symbol,
+        "last_price": last_price,
+        "quote_timestamp": quote_timestamp.strftime("%Y-%m-%d %H:%M:%S IST") if quote_timestamp else "Unavailable",
+        "quote_age_minutes": quote_age_minutes,
+        "current_market_date": now.strftime("%Y-%m-%d"),
+        "timestamp": now.strftime("%d %b %Y, %H:%M IST"),
+        "feed_error": feed_error,
+    }
+
+
+
+
+def render_market_status_panel(kite):
+    status = get_kite_market_status(kite)
+
+    status_colour = "#4ade80" if status["intraday_enabled"] else "#fbbf24"
+    signal_colour = "#4ade80" if status["intraday_enabled"] else "#9090a0"
+
+    quote_age = status.get("quote_age_minutes")
+    quote_age_text = "Unavailable" if quote_age is None else f"{quote_age:.1f} minutes"
+
+    last_price = status.get("last_price")
+    last_price_text = "Unavailable" if last_price is None else f"₹{float(last_price):,.2f}"
+
+    st.markdown(
+        "<div class='section-header'>Market Status</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Market Status</div>"
+        "<div class='stat-value-sm' style='color:" + status_colour + ";'>"
+        + escape(status["status"]) +
+        "</div>"
+        "<div class='stat-meta'>" + escape(status["timestamp"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Live NIFTY Quote</div>"
+        "<div class='stat-value-sm'>" + escape(last_price_text) + "</div>"
+        "<div class='stat-meta'>" + escape(status["quote_symbol"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Quote Timestamp</div>"
+        "<div class='stat-value-sm'>" + escape(status["quote_timestamp"]) + "</div>"
+        "<div class='stat-meta'>Quote age: " + escape(quote_age_text) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Intraday Signal</div>"
+        "<div class='stat-value-sm' style='color:" + signal_colour + ";'>"
+        + escape(status["signal_label"]) +
+        "</div>"
+        "<div class='stat-meta'>"
+        + ("Enabled" if status["intraday_enabled"] else "Disabled") +
+        "</div>"
+        "</div>"
+
+        "</div>"
+        "<div style='height:1px;background:#2a2a30;margin:20px 0;'></div>"
+        "<div class='placeholder-text'>"
+        + escape(status["guidance"]) +
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+
 def render_live_overview_summary():
     st.markdown(
         "<div class='section-header'>System Summary</div>",
@@ -603,11 +770,6 @@ def render_live_overview_summary():
         "</div>"
 
         "</div>"
-        "<div style='height:1px;background:#2a2a30;margin:20px 0;'></div>"
-        "<div class='placeholder-text'>"
-        "<strong>Hedge decision workflow:</strong> the Overview shows the latest live decision summary. "
-        "Detailed planner reasoning, futures contract sizing, margin checks, and execution traces are available in the Hedge Plan tab."
-        "</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -616,7 +778,7 @@ def render_live_overview_summary():
 
 def render_live_decision_summary(kite):
     st.markdown(
-        "<div class='section-header'>Live Decision Summary</div>",
+        "<div class='section-header'>Confirmed EOD Hedge Plan</div>",
         unsafe_allow_html=True,
     )
 
@@ -711,45 +873,229 @@ def render_live_decision_summary(kite):
 
 
 
+
+def render_intraday_signal_panel(kite):
+    status = get_kite_market_status(kite)
+
+    if status["intraday_enabled"]:
+        panel_title = "Live Intraday Signal"
+        panel_value = "Active"
+        panel_colour = "#4ade80"
+        guidance = (
+            "The live intraday signal is active because the market feed is fresh. "
+            "This signal is provisional and should be confirmed after market close."
+        )
+    else:
+        panel_title = "Live Intraday Signal"
+        panel_value = "Disabled"
+        panel_colour = "#9090a0"
+        guidance = status["guidance"]
+
+    st.markdown(
+        "<div class='section-header'>" + escape(panel_title) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel' style='opacity:" + ("1.0" if status["intraday_enabled"] else "0.62") + ";'>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Intraday Status</div>"
+        "<div class='stat-value-sm' style='color:" + panel_colour + ";'>"
+        + escape(panel_value) +
+        "</div>"
+        "<div class='stat-meta'>" + escape(status["signal_label"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Market Feed</div>"
+        "<div class='stat-value-sm'>" + escape(status["status"]) + "</div>"
+        "<div class='stat-meta'>" + escape(status["quote_timestamp"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Live Price Source</div>"
+        "<div class='stat-value-sm'>" + escape(status["quote_symbol"]) + "</div>"
+        "<div class='stat-meta'>Kite quote feed</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Signal Role</div>"
+        "<div class='stat-value-sm'>Provisional</div>"
+        "<div class='stat-meta'>Not final until EOD close</div>"
+        "</div>"
+
+        "</div>"
+        "<div style='height:1px;background:#2a2a30;margin:20px 0;'></div>"
+        "<div class='placeholder-text'>"
+        + escape(guidance) +
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+
+
+def render_overview_command_center(kite):
+    status = get_kite_market_status(kite)
+
+    if "live_hedge_plan_cache" not in st.session_state:
+        with st.spinner("Preparing confirmed hedge decision ..."):
+            try:
+                snapshot, item, result, inputs = build_live_hedge_plan(kite)
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": snapshot,
+                    "item": item,
+                    "result": result,
+                    "inputs": inputs,
+                    "error": None,
+                }
+            except Exception as exc:
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": None,
+                    "item": None,
+                    "result": None,
+                    "inputs": None,
+                    "error": str(exc),
+                }
+
+    cache = st.session_state.live_hedge_plan_cache
+
+    st.markdown(
+        "<div class='section-header'>Market &amp; Hedge Overview</div>",
+        unsafe_allow_html=True,
+    )
+
+    status_colour = "#4ade80" if status["intraday_enabled"] else "#fbbf24"
+    quote_age = status.get("quote_age_minutes")
+    quote_age_text = "Unavailable" if quote_age is None else f"{quote_age:.1f} minutes"
+    last_price = status.get("last_price")
+    last_price_text = "Unavailable" if last_price is None else f"₹{float(last_price):,.2f}"
+
+    if cache.get("error"):
+        decision_html = (
+            "<div style='font-size:13px;color:#f87171;'>"
+            "Confirmed hedge decision unavailable: " + escape(cache["error"]) + "</div>"
+        )
+    else:
+        snapshot = cache["snapshot"]
+        result = cache["result"]
+        inputs = cache["inputs"]
+        execution = result.futures_execution_result
+
+        action = ui_label(result.position_action)
+        instruction = ui_label(result.execution_instruction)
+        risk_regime = str(inputs.get("risk_regime", "N/A")).title()
+        predicted_volatility = float(inputs.get("predicted_volatility", 0.0))
+        target_ratio = float(result.execution_target_hedge_ratio)
+        achieved_ratio = float(get_result_field(execution, "achieved_hedge_ratio", 0.0))
+        target_contracts = int(result.recommended_short_contracts)
+        trade_now = int(result.contract_delta)
+        margin_required = float(get_result_field(execution, "additional_margin_required", 0.0))
+        margin_status = "Sufficient" if result.margin_sufficient else "Insufficient"
+        margin_colour = "#4ade80" if result.margin_sufficient else "#f87171"
+
+        trade_text = "No trade" if trade_now == 0 else f"{trade_now:+d} contracts"
+
+        decision_html = (
+            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:16px;'>"
+
+            "<div>"
+            "<div class='stat-label'>Planner Action</div>"
+            "<div class='stat-value-sm'>" + escape(action) + "</div>"
+            "<div class='stat-meta'>" + escape(instruction) + "</div>"
+            "</div>"
+
+            "<div>"
+            "<div class='stat-label'>Risk Regime</div>"
+            "<div class='stat-value-sm'>" + escape(risk_regime) + "</div>"
+            "<div class='stat-meta'>Predicted volatility: " + f"{predicted_volatility:.2%}" + "</div>"
+            "</div>"
+
+            "<div>"
+            "<div class='stat-label'>Hedra Target Ratio</div>"
+            "<div class='stat-value-sm'>" + f"{target_ratio:.2%}" + "</div>"
+            "<div class='stat-meta'>Achieved: " + f"{achieved_ratio:.2%}" + "</div>"
+            "</div>"
+
+            "<div>"
+            "<div class='stat-label'>Target Position</div>"
+            "<div class='stat-value-sm'>" + str(target_contracts) + " short FUT</div>"
+            "<div class='stat-meta'>Trade now: " + escape(trade_text) + "</div>"
+            "</div>"
+
+            "<div>"
+            "<div class='stat-label'>Margin Status</div>"
+            "<div class='stat-value-sm' style='color:" + margin_colour + ";'>" + margin_status + "</div>"
+            "<div class='stat-meta'>Required: ₹" + f"{margin_required:,.0f}" + "</div>"
+            "</div>"
+
+            "<div>"
+            "<div class='stat-label'>ML Signal Date</div>"
+            "<div class='stat-value-sm'>" + escape(str(inputs.get("ml_signal_data_date", "N/A"))) + "</div>"
+            "<div class='stat-meta'>" + escape(str(inputs.get("ml_signal_model", "GJR-GARCH"))) + "</div>"
+            "</div>"
+
+            "</div>"
+        )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:0.85fr 1.55fr;gap:18px;align-items:stretch;'>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:18px;'>"
+        "<div class='placeholder-title'>Market Status</div>"
+        "<div style='display:grid;grid-template-columns:1fr;gap:14px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Status</div>"
+        "<div class='stat-value-sm' style='color:" + status_colour + ";'>" + escape(status["status"]) + "</div>"
+        "<div class='stat-meta'>" + escape(status["timestamp"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Live NIFTY Quote</div>"
+        "<div class='stat-value-sm'>" + escape(last_price_text) + "</div>"
+        "<div class='stat-meta'>" + escape(status["quote_symbol"]) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Quote Timestamp</div>"
+        "<div class='stat-value-sm'>" + escape(status["quote_timestamp"]) + "</div>"
+        "<div class='stat-meta'>Age: " + escape(quote_age_text) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Intraday Signal</div>"
+        "<div class='stat-value-sm'>" + escape(status["signal_label"]) + "</div>"
+        "<div class='stat-meta'>" + ("Enabled" if status["intraday_enabled"] else "Disabled") + "</div>"
+        "</div>"
+
+        "</div>"
+        "</div>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:18px;'>"
+        "<div class='placeholder-title'>Confirmed EOD Hedge Plan</div>"
+        + decision_html +
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+        "<div class='placeholder-text'>"
+        "This is the confirmed hedge view based on the latest completed market-data state available to the model layer. "
+        "The intraday signal is treated separately and remains provisional until market close."
+        "</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+
 def render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_email):
-    # â”€â”€ Status cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-        st.markdown(
-            "<div class='stat-card'><div class='stat-label'>Kite Connection</div>"
-            "<div class='stat-value'>Active</div>"
-            "<div class='stat-badge badge-green'>"
-            "<span style='width:5px;height:5px;border-radius:50%;background:#4ade80;"
-            "display:inline-block;'></span>&nbsp;Connected</div></div>",
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            "<div class='stat-card'><div class='stat-label'>Authenticated As</div>"
-            "<div class='stat-value-sm'>" + user_name + "</div>"
-            "<div class='stat-meta'>" + user_email + "</div></div>",
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            "<div class='stat-card'><div class='stat-label'>Access Token</div>"
-            "<div style='font-size:13px;font-weight:500;color:#6c63ff;"
-            "font-family:Courier New,monospace;letter-spacing:0.5px;'>" + tok_prev + "</div>"
-            "<div class='stat-meta'>Expires 6:00 AM IST</div></div>",
-            unsafe_allow_html=True,
-        )
-    with c4:
-        st.markdown(
-            "<div class='stat-card'><div class='stat-label'>Total Capital</div>"
-            "<div class='stat-value' style='font-size:16px;'>&#8377;" + "{:,.0f}".format(TOTAL_CAPITAL) + "</div>"
-            "<div class='stat-meta'>Stocks 80% &middot; Margin reserve 20%</div></div>",
-            unsafe_allow_html=True,
-        )
-
-    # â”€â”€ Portfolio + Sector chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    render_live_overview_summary()
-    render_live_decision_summary(kite)
+    render_overview_command_center(kite)
+    render_intraday_signal_panel(kite)
     return
 
     st.markdown(
@@ -1013,9 +1359,11 @@ def build_live_hedge_plan(kite):
     simulated_margin_reserve = MARGIN_RESERVE
 
     portfolio_value = stock_allocation
-    predicted_volatility = 0.18
-    risk_regime = "HIGH"
-    core_target_ratio = 0.70
+
+    live_signal = get_live_volatility_signal()
+    predicted_volatility = live_signal.predicted_volatility
+    risk_regime = live_signal.risk_regime
+    core_target_ratio = live_signal.core_target_ratio
 
     margin_per_contract = snapshot.futures_price * snapshot.contract.lot_size * 0.12
 
@@ -1044,6 +1392,12 @@ def build_live_hedge_plan(kite):
         "predicted_volatility": predicted_volatility,
         "risk_regime": risk_regime,
         "core_target_ratio": core_target_ratio,
+        "ml_signal_source": live_signal.source,
+        "ml_signal_model": live_signal.model,
+        "ml_signal_data_date": live_signal.data_date,
+        "ml_low_threshold": live_signal.low_threshold,
+        "ml_high_threshold": live_signal.high_threshold,
+        "ml_latest_close": live_signal.latest_close,
         "margin_per_contract": margin_per_contract,
     }
 
@@ -1183,6 +1537,234 @@ def render_live_hedge_plan(kite):
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+
+
+def render_live_explanation(kite):
+    st.markdown(
+        "<div class='section-header'>Live Decision Explanation</div>",
+        unsafe_allow_html=True,
+    )
+
+    if "live_hedge_plan_cache" not in st.session_state:
+        with st.spinner("Preparing live explanation ..."):
+            try:
+                snapshot, item, result, inputs = build_live_hedge_plan(kite)
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": snapshot,
+                    "item": item,
+                    "result": result,
+                    "inputs": inputs,
+                    "error": None,
+                }
+            except Exception as exc:
+                st.session_state.live_hedge_plan_cache = {
+                    "snapshot": None,
+                    "item": None,
+                    "result": None,
+                    "inputs": None,
+                    "error": str(exc),
+                }
+
+    cache = st.session_state.live_hedge_plan_cache
+
+    if cache.get("error"):
+        st.markdown(
+            "<div style='background:#1a0808;border:1px solid #4a1a1a;border-radius:8px;"
+            "padding:14px 16px;font-size:13px;color:#f87171;'>"
+            "Live explanation unavailable: " + escape(cache["error"]) + "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    snapshot = cache["snapshot"]
+    result = cache["result"]
+    inputs = cache["inputs"]
+    execution = result.futures_execution_result
+    planning = result.planning_result
+
+    plan_lines = get_result_field(planning, "explanation", []) or []
+    exec_lines = get_result_field(execution, "explanation", []) or []
+
+    action = ui_label(result.position_action)
+    instruction = ui_label(result.execution_instruction)
+    risk_regime = str(inputs.get("risk_regime", "N/A")).title()
+    predicted_volatility = float(inputs.get("predicted_volatility", 0.0))
+    target_ratio = float(result.execution_target_hedge_ratio)
+    achieved_ratio = float(get_result_field(execution, "achieved_hedge_ratio", 0.0))
+    target_contracts = int(result.recommended_short_contracts)
+    current_contracts = int(result.current_short_contracts)
+    trade_now = int(result.contract_delta)
+    futures_price = float(snapshot.futures_price)
+    lot_size = int(snapshot.contract.lot_size)
+    contract_notional = futures_price * lot_size
+    margin_required = float(get_result_field(execution, "additional_margin_required", 0.0))
+    margin_status = "Sufficient" if result.margin_sufficient else "Insufficient"
+
+    if trade_now == 0:
+        trade_sentence = (
+            "No additional futures trade is required because the current position already "
+            "matches the target hedge position."
+        )
+    elif trade_now > 0:
+        trade_sentence = (
+            f"Hedra recommends adding {trade_now} short NIFTY futures contract(s) to reach "
+            "the target hedge position."
+        )
+    else:
+        trade_sentence = (
+            f"Hedra recommends reducing the short hedge by {abs(trade_now)} contract(s) to "
+            "bring the position back to the target level."
+        )
+
+    action_lower = action.lower()
+    risk_lower = risk_regime.lower()
+
+    if risk_lower == "high":
+        market_text = (
+            f"The current market is classified as {risk_regime} risk. The predicted volatility is "
+            f"{predicted_volatility:.2%}, so Hedra treats the portfolio as needing stronger downside protection."
+        )
+    elif risk_lower == "medium":
+        market_text = (
+            f"The current market is classified as {risk_regime} risk. The predicted volatility is "
+            f"{predicted_volatility:.2%}, so Hedra applies a moderate hedge rather than fully reducing exposure."
+        )
+    elif risk_lower == "low":
+        market_text = (
+            f"The current market is classified as {risk_regime} risk. The predicted volatility is "
+            f"{predicted_volatility:.2%}, so Hedra avoids unnecessary hedging unless the planner finds a clear need."
+        )
+    else:
+        market_text = (
+            f"The current market risk label is {risk_regime}. The predicted volatility used by the decision layer is "
+            f"{predicted_volatility:.2%}."
+        )
+
+    if "open" in action_lower:
+        decision_text = "The planner recommends opening a short NIFTY futures hedge to reduce downside portfolio risk."
+    elif "hold" in action_lower:
+        decision_text = "The planner recommends holding the current hedge position because the existing protection is already close to the target."
+    elif "reduce" in action_lower:
+        decision_text = "The planner recommends reducing the hedge because the current futures position is higher than the target level."
+    elif "close" in action_lower:
+        decision_text = "The planner recommends closing the hedge because the system no longer requires short futures protection."
+    else:
+        decision_text = f"The planner selected the action: {action}."
+
+    if target_contracts > 0:
+        hedge_size_text = (
+            f"The target hedge ratio is {target_ratio:.2%}. Based on the futures price and lot size, "
+            f"this becomes a target position of {target_contracts} short NIFTY futures contract(s). "
+            f"The achieved hedge ratio is approximately {achieved_ratio:.2%}."
+        )
+    else:
+        hedge_size_text = (
+            f"The target hedge ratio is {target_ratio:.2%}. This results in no short futures position being required."
+        )
+
+    if result.margin_sufficient:
+        margin_text = (
+            f"The required additional margin is ₹{margin_required:,.0f}, and the available margin reserve is sufficient. "
+            "This means the recommendation can be reviewed as an executable hedge decision."
+        )
+    else:
+        margin_text = (
+            f"The required additional margin is ₹{margin_required:,.0f}, but the margin reserve is not sufficient. "
+            "This means the hedge recommendation should not be executed without additional capital or position adjustment."
+        )
+
+    narrative_sections = [
+        ("Market condition", market_text),
+        ("Planner decision", decision_text),
+        ("Hedge size", hedge_size_text),
+        ("Execution check", trade_sentence + " " + margin_text),
+    ]
+
+    narrative_html = "".join(
+        "<div style='padding:14px 0;border-bottom:1px solid #2a2a30;'>"
+        "<div style='font-size:12px;font-weight:650;color:#f0f0f5;margin-bottom:6px;'>"
+        + escape(title)
+        + "</div>"
+        "<div class='placeholder-text'>"
+        + escape(body)
+        + "</div>"
+        "</div>"
+        for title, body in narrative_sections
+    )
+
+    factor_rows = [
+        ("Risk regime", risk_regime),
+        ("Predicted volatility", f"{predicted_volatility:.2%}"),
+        ("Planner action", action),
+        ("Execution instruction", instruction),
+        ("Target hedge ratio", f"{target_ratio:.2%}"),
+        ("Achieved hedge ratio", f"{achieved_ratio:.2%}"),
+        ("Current short futures position", f"{current_contracts} contracts"),
+        ("Target short futures position", f"{target_contracts} contracts"),
+        ("Contracts to trade now", "No trade" if trade_now == 0 else f"{trade_now:+d} contracts"),
+        ("Futures contract", snapshot.contract.tradingsymbol),
+        ("Futures price", f"₹{futures_price:,.2f}"),
+        ("Lot size", f"{lot_size}"),
+        ("Estimated contract notional", f"₹{contract_notional:,.2f}"),
+        ("Required margin", f"₹{margin_required:,.0f}"),
+        ("Margin status", margin_status),
+    ]
+
+    factors_df = pd.DataFrame(factor_rows, columns=["Decision Factor", "Value"])
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>Decision narrative</div>"
+        + narrative_html +
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='section-header'>Decision Factors</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(factors_df, hide_index=True, width="stretch")
+
+    st.markdown(
+        "<div class='section-header'>XAI / SHAP Status</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-text'>"
+        "<strong>Current explanation type:</strong> planner-based and execution-based explainability. "
+        "This live view explains why the planner selected the hedge action and how the futures position was sized. "
+        "<br><br>"
+        "<strong>SHAP status:</strong> SHAP feature attribution is not yet active in this dashboard view. "
+        "It should be connected later to the volatility prediction layer to show the top model drivers behind the risk signal."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    trace_rows = []
+    for idx, line in enumerate(plan_lines, start=1):
+        trace_rows.append({
+            "Trace Type": "Planning",
+            "Step": idx,
+            "Message": ui_text(line),
+        })
+
+    for idx, line in enumerate(exec_lines, start=1):
+        trace_rows.append({
+            "Trace Type": "Execution",
+            "Step": idx,
+            "Message": ui_text(line),
+        })
+
+    with st.expander("Technical trace: planner and execution logs", expanded=False):
+        if trace_rows:
+            trace_df = pd.DataFrame(trace_rows)
+            st.dataframe(trace_df, hide_index=True, width="stretch")
+        else:
+            st.info("No technical trace lines were returned for this decision.")
 
 
 
@@ -1876,7 +2458,7 @@ def render_dashboard_home(kite, profile):
     user_email = escape(profile.get("email", "—"))
 
     st.markdown(
-        "<p class='page-title'>Hedra Dashboard</p>"
+        "<p class='page-title'>Dashboard</p>"
         "<p class='page-sub'>" + now + "</p>",
         unsafe_allow_html=True,
     )
@@ -1887,19 +2469,6 @@ def render_dashboard_home(kite, profile):
         horizontal=True,
         key="operating_mode",
         label_visibility="collapsed",
-    )
-
-    st.markdown(
-        "<div class='mode-card'>"
-        "<span class='mode-pill'>" + escape(mode) + "</span>"
-        "<strong>Workflow:</strong> "
-        + (
-            "Live Kite market data, simulated capital, and real planner/execution recommendation."
-            if mode == "Live Monitoring"
-            else "Replay historical datasets, historical hedge plans, and backtest performance."
-        )
-        + "</div>",
-        unsafe_allow_html=True,
     )
 
     tab_overview, tab_portfolio, tab_market, tab_ml, tab_plan, tab_explain, tab_eval, tab_audit = st.tabs([
@@ -1950,10 +2519,13 @@ def render_dashboard_home(kite, profile):
             render_historical_hedge_plan_replay()
 
     with tab_explain:
-        render_placeholder_section(
-            "Explanation",
-            "This tab will show planner reasoning, rejected alternatives, risk drivers, and human-readable decision justification."
-        )
+        if mode == "Live Monitoring":
+            render_live_explanation(kite)
+        else:
+            render_placeholder_section(
+                "Historical Explanation",
+                "This tab will show historical planner reasoning, risk-gating logic, candidate hedge-ratio interpretation, and futures execution justification."
+            )
 
     with tab_eval:
         if mode == "Historical Backtesting":
