@@ -22,6 +22,7 @@ from html import escape
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.optimize import brentq
 from dotenv import load_dotenv, set_key
 from kiteconnect import KiteConnect
@@ -936,6 +937,491 @@ def render_intraday_signal_panel(kite):
     )
 
 
+
+
+
+def _load_market_price_frame(csv_path, label):
+    if not os.path.exists(csv_path):
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(csv_path)
+
+        if "date" not in df.columns or "close" not in df.columns:
+            return pd.DataFrame()
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df = df.dropna(subset=["date", "close"]).sort_values("date")
+
+        if df.empty:
+            return pd.DataFrame()
+
+        return df[["date", "close"]].rename(columns={"close": label}).set_index("date")
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def _market_dataset_summary(csv_path, dataset_name, source_note):
+    if not os.path.exists(csv_path):
+        return {
+            "Dataset": dataset_name,
+            "Source": source_note,
+            "Status": "Missing",
+            "Rows": 0,
+            "Start Date": "N/A",
+            "End Date": "N/A",
+            "Latest Close": "N/A",
+        }
+
+    try:
+        df = pd.read_csv(csv_path)
+
+        if "date" not in df.columns:
+            return {
+                "Dataset": dataset_name,
+                "Source": source_note,
+                "Status": "Loaded, date column missing",
+                "Rows": len(df),
+                "Start Date": "N/A",
+                "End Date": "N/A",
+                "Latest Close": "N/A",
+            }
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"]).sort_values("date")
+
+        latest_close = "N/A"
+        if "close" in df.columns and not df.empty:
+            close_series = pd.to_numeric(df["close"], errors="coerce").dropna()
+            if not close_series.empty:
+                latest_close = "₹" + f"{float(close_series.iloc[-1]):,.2f}"
+
+        return {
+            "Dataset": dataset_name,
+            "Source": source_note,
+            "Status": "Available",
+            "Rows": len(df),
+            "Start Date": df["date"].min().strftime("%Y-%m-%d") if not df.empty else "N/A",
+            "End Date": df["date"].max().strftime("%Y-%m-%d") if not df.empty else "N/A",
+            "Latest Close": latest_close,
+        }
+
+    except Exception as exc:
+        return {
+            "Dataset": dataset_name,
+            "Source": source_note,
+            "Status": "Load error: " + str(exc),
+            "Rows": 0,
+            "Start Date": "N/A",
+            "End Date": "N/A",
+            "Latest Close": "N/A",
+        }
+
+
+def render_market_data_content(kite, mode):
+    st.markdown(
+        "<div class='section-header'>Market Data</div>",
+        unsafe_allow_html=True,
+    )
+
+    status = get_kite_market_status(kite)
+
+    live_futures_symbol = "N/A"
+    live_futures_price = "N/A"
+    live_futures_lot = "N/A"
+
+    try:
+        if "live_hedge_plan_cache" not in st.session_state:
+            snapshot, item, result, inputs = build_live_hedge_plan(kite)
+            st.session_state.live_hedge_plan_cache = {
+                "snapshot": snapshot,
+                "item": item,
+                "result": result,
+                "inputs": inputs,
+                "error": None,
+            }
+
+        cache = st.session_state.get("live_hedge_plan_cache", {})
+        if not cache.get("error"):
+            snapshot = cache.get("snapshot")
+            contract = getattr(snapshot, "contract", None)
+
+            live_futures_symbol = escape(str(getattr(contract, "tradingsymbol", "N/A")))
+            live_futures_lot = escape(str(getattr(contract, "lot_size", "N/A")))
+
+            futures_price = getattr(snapshot, "futures_price", None)
+            if futures_price is not None:
+                live_futures_price = "₹" + f"{float(futures_price):,.2f}"
+
+    except Exception:
+        pass
+
+    last_price = status.get("last_price")
+    last_price_text = "Unavailable" if last_price is None else "₹" + f"{float(last_price):,.2f}"
+
+    quote_age = status.get("quote_age_minutes")
+    quote_age_text = "Unavailable" if quote_age is None else f"{quote_age:.1f} minutes"
+
+    status_colour = "#4ade80" if status["intraday_enabled"] else "#fbbf24"
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Market Status</div>"
+        "<div class='stat-value-sm' style='color:" + status_colour + ";'>" + escape(str(status["status"])) + "</div>"
+        "<div class='stat-meta'>" + escape(str(status["timestamp"])) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>NIFTY Spot Quote</div>"
+        "<div class='stat-value-sm'>" + escape(last_price_text) + "</div>"
+        "<div class='stat-meta'>" + escape(str(status["quote_symbol"])) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Quote Freshness</div>"
+        "<div class='stat-value-sm'>" + escape(quote_age_text) + "</div>"
+        "<div class='stat-meta'>" + escape(str(status["quote_timestamp"])) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Active Futures Contract</div>"
+        "<div class='stat-value-sm'>" + live_futures_symbol + "</div>"
+        "<div class='stat-meta'>Price " + escape(live_futures_price) + " &middot; Lot " + live_futures_lot + "</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    spot_path = os.path.join("data", "raw", "NIFTY50_spot.csv")
+    futures_path = os.path.join("data", "raw", "NIFTY_futures_continuous.csv")
+
+    summary_df = pd.DataFrame([
+        _market_dataset_summary(spot_path, "NIFTY 50 Spot", "Local historical spot CSV"),
+        _market_dataset_summary(futures_path, "NIFTY Futures Continuous", "Local historical futures CSV"),
+    ])
+
+    st.markdown(
+        "<div class='section-header'>Historical Data Availability</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.dataframe(summary_df, hide_index=True, width="stretch")
+
+    spot_frame = _load_market_price_frame(spot_path, "NIFTY 50 Spot Close")
+    futures_frame = _load_market_price_frame(futures_path, "NIFTY Futures Close")
+
+    chart_parts = []
+    if not spot_frame.empty:
+        chart_parts.append(spot_frame.tail(180))
+    if not futures_frame.empty:
+        chart_parts.append(futures_frame.tail(180))
+
+    if chart_parts:
+        chart_df = pd.concat(chart_parts, axis=1).dropna(how="all")
+
+        st.markdown(
+            "<div class='section-header'>Recent Index and Futures Close</div>",
+            unsafe_allow_html=True,
+        )
+
+        plotted = chart_df.dropna(how="all")
+
+        if not plotted.empty:
+            values = plotted.stack().dropna()
+
+            if not values.empty:
+                y_min = float(values.min())
+                y_max = float(values.max())
+
+                # Tight dynamic range so the chart shows movement clearly
+                data_range = y_max - y_min
+                padding = max(data_range * 0.12, y_max * 0.003)
+
+                fig, ax = plt.subplots(figsize=(13, 4.2))
+
+                if "NIFTY 50 Spot Close" in plotted.columns:
+                    ax.plot(
+                        plotted.index,
+                        plotted["NIFTY 50 Spot Close"],
+                        label="NIFTY 50 Spot Close",
+                        linewidth=2.2,
+                        color="#60a5fa",
+                    )
+
+                if "NIFTY Futures Close" in plotted.columns:
+                    ax.plot(
+                        plotted.index,
+                        plotted["NIFTY Futures Close"],
+                        label="NIFTY Futures Close",
+                        linewidth=2.2,
+                        linestyle="--",
+                        color="#f59e0b",
+                    )
+
+                ax.set_ylim(y_min - padding, y_max + padding)
+                ax.set_xlabel("")
+                ax.set_ylabel("Close Price")
+
+                fig.patch.set_facecolor("#0f1014")
+                ax.set_facecolor("#0f1014")
+
+                ax.grid(True, alpha=0.22)
+                ax.tick_params(axis="x", colors="#b8b8c2", labelsize=9)
+                ax.tick_params(axis="y", colors="#b8b8c2", labelsize=9)
+                ax.yaxis.label.set_color("#b8b8c2")
+
+                for spine in ax.spines.values():
+                    spine.set_color("#2a2a30")
+
+                legend = ax.legend(loc="lower left", frameon=False)
+                for text_item in legend.get_texts():
+                    text_item.set_color("#d4d4dc")
+
+                fig.autofmt_xdate(rotation=0)
+                st.pyplot(fig, width="stretch")
+                plt.close(fig)
+
+
+
+
+def humanise_signal_source(source):
+    if not source:
+        return "Volatility signal source not available"
+
+    mapping = {
+        "latest_available_nifty_spot_gjr_garch": "Latest available NIFTY spot history processed with GJR-GARCH",
+        "live_intraday_nifty_spot_gjr_garch": "Live intraday NIFTY spot feed processed with GJR-GARCH",
+        "latest_available_nifty_spot_garch": "Latest available NIFTY spot history processed with GARCH",
+        "latest_available_nifty_spot_egarch": "Latest available NIFTY spot history processed with EGARCH",
+    }
+
+    source = str(source).strip()
+
+    if source in mapping:
+        return mapping[source]
+
+    return source.replace("_", " ").strip().capitalize()
+
+
+def build_volatility_ruler_html(predicted_volatility, low_threshold, high_threshold, regime_colour, interpretation):
+    predicted_volatility = float(predicted_volatility or 0.0)
+    low_threshold = float(low_threshold or 0.0)
+    high_threshold = float(high_threshold or 0.0)
+
+    scale_max = max(predicted_volatility, low_threshold, high_threshold, 0.20) * 1.15
+
+    def to_position(value):
+        if scale_max <= 0:
+            return 0.0
+        return max(0.0, min(100.0, (float(value) / scale_max) * 100.0))
+
+    low_position = to_position(low_threshold)
+    high_position = to_position(high_threshold)
+    prediction_position = to_position(predicted_volatility)
+
+    return (
+        "<div class='hedge-panel'>"
+
+        "<div style='margin-bottom:10px;'>"
+        "<div class='placeholder-title'>Volatility Signal Ruler</div>"
+        "<div class='placeholder-text'>"
+        "The model forecast is positioned against the low-risk and high-risk thresholds used by the hedge planner."
+        "</div>"
+        "</div>"
+
+        "<div style='position:relative;height:18px;margin:34px 8px 58px 8px;"
+        "background:linear-gradient(90deg,#2563eb 0%,#f59e0b 55%,#ef4444 100%);"
+        "border:1px solid #2a2a30;border-radius:999px;'>"
+
+        "<div style='position:absolute;left:0%;top:24px;font-size:11px;color:#9090a0;'>"
+        "0.00%</div>"
+
+        "<div style='position:absolute;right:0%;top:24px;font-size:11px;color:#9090a0;text-align:right;'>"
+        "Scale max<br>" + f"{scale_max:.2%}" + "</div>"
+
+        "<div style='position:absolute;left:" + f"{low_position:.2f}" + "%;top:-9px;width:2px;height:36px;"
+        "background:#4ade80;border-radius:999px;'></div>"
+        "<div style='position:absolute;left:" + f"{low_position:.2f}" + "%;top:32px;transform:translateX(-50%);"
+        "font-size:11px;color:#b8b8c2;text-align:center;white-space:nowrap;'>"
+        "Low threshold<br>" + f"{low_threshold:.2%}" + "</div>"
+
+        "<div style='position:absolute;left:" + f"{high_position:.2f}" + "%;top:-9px;width:2px;height:36px;"
+        "background:#fbbf24;border-radius:999px;'></div>"
+        "<div style='position:absolute;left:" + f"{high_position:.2f}" + "%;top:32px;transform:translateX(-50%);"
+        "font-size:11px;color:#b8b8c2;text-align:center;white-space:nowrap;'>"
+        "High threshold<br>" + f"{high_threshold:.2%}" + "</div>"
+
+        "<div style='position:absolute;left:" + f"{prediction_position:.2f}" + "%;top:-14px;width:4px;height:46px;"
+        "background:" + regime_colour + ";border-radius:999px;box-shadow:0 0 12px " + regime_colour + ";'></div>"
+        "<div style='position:absolute;left:" + f"{prediction_position:.2f}" + "%;top:-36px;transform:translateX(-50%);"
+        "font-size:11px;color:#f0f0f5;text-align:center;white-space:nowrap;'>"
+        "Current prediction<br>" + f"{predicted_volatility:.2%}" + "</div>"
+
+        "</div>"
+
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+
+        "<div class='placeholder-text'>"
+        + escape(interpretation) +
+        "</div>"
+
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+
+        "<div class='placeholder-text'>"
+        "<strong>Important note:</strong> this live prediction view currently uses the latest available local NIFTY spot history "
+        "for the selected GJR-GARCH volatility signal. Live Kite quotes are shown in the Market Data and Overview tabs, "
+        "while the intraday quote-updated prediction extension can be added later if time permits."
+        "</div>"
+
+        "</div>"
+    )
+
+
+def render_ml_prediction_content(kite, mode):
+    st.markdown(
+        "<div class='section-header'>ML Prediction</div>",
+        unsafe_allow_html=True,
+    )
+
+    try:
+        signal = get_live_volatility_signal()
+    except Exception as exc:
+        st.markdown(
+            "<div class='hedge-panel'>"
+            "<div class='placeholder-title'>Prediction unavailable</div>"
+            "<div class='placeholder-text'>"
+            "The volatility prediction layer could not be loaded: "
+            + escape(str(exc)) +
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    predicted_volatility = float(signal.predicted_volatility)
+    low_threshold = float(signal.low_threshold)
+    high_threshold = float(signal.high_threshold)
+    risk_regime = str(signal.risk_regime).upper()
+    target_ratio = float(signal.core_target_ratio)
+    latest_close = float(signal.latest_close)
+
+    signal_source_label = humanise_signal_source(signal.source)
+
+    if risk_regime == "HIGH":
+        regime_colour = "#f87171"
+        regime_text = "High volatility regime"
+        interpretation = (
+            "The predicted volatility is above the high-risk threshold. "
+            "The system therefore classifies the market state as HIGH risk and allows a stronger hedge target."
+        )
+    elif risk_regime == "MEDIUM":
+        regime_colour = "#fbbf24"
+        regime_text = "Medium volatility regime"
+        interpretation = (
+            "The predicted volatility is between the low and high thresholds. "
+            "The system classifies the market state as MEDIUM risk and uses a moderate hedge target."
+        )
+    else:
+        regime_colour = "#4ade80"
+        regime_text = "Low volatility regime"
+        interpretation = (
+            "The predicted volatility is below the low-risk threshold. "
+            "The system classifies the market state as LOW risk and keeps the hedge target conservative."
+        )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Active Model</div>"
+        "<div class='stat-value-sm'>" + escape(str(signal.model)) + "</div>"
+        "<div class='stat-meta'>" + escape(signal_source_label) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Predicted Volatility</div>"
+        "<div class='stat-value-sm'>" + f"{predicted_volatility:.2%}" + "</div>"
+        "<div class='stat-meta'>Annualised volatility estimate</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Risk Regime</div>"
+        "<div class='stat-value-sm' style='color:" + regime_colour + ";'>" + escape(risk_regime.title()) + "</div>"
+        "<div class='stat-meta'>" + escape(regime_text) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Core Hedge Target</div>"
+        "<div class='stat-value-sm'>" + f"{target_ratio:.2%}" + "</div>"
+        "<div class='stat-meta'>Before execution constraints</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    threshold_df = pd.DataFrame([
+        {
+            "Signal Component": "Latest model data date",
+            "Value": str(signal.data_date),
+            "Interpretation": "Most recent historical observation used by the prediction layer",
+        },
+        {
+            "Signal Component": "Latest close in model dataset",
+            "Value": "₹" + f"{latest_close:,.2f}",
+            "Interpretation": "Latest close available in the local NIFTY spot dataset",
+        },
+        {
+            "Signal Component": "Low-risk threshold",
+            "Value": f"{low_threshold:.2%}",
+            "Interpretation": "Below this level, volatility is treated as LOW",
+        },
+        {
+            "Signal Component": "High-risk threshold",
+            "Value": f"{high_threshold:.2%}",
+            "Interpretation": "Above this level, volatility is treated as HIGH",
+        },
+        {
+            "Signal Component": "Predicted volatility",
+            "Value": f"{predicted_volatility:.2%}",
+            "Interpretation": "Current model forecast used for risk-regime classification",
+        },
+        {
+            "Signal Component": "Selected risk regime",
+            "Value": risk_regime.title(),
+            "Interpretation": "Final volatility regime passed to the hedge planner",
+        },
+    ])
+
+    st.markdown(
+        "<div class='section-header'>Model Signal Breakdown</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(threshold_df, hide_index=True, width="stretch")
+
+    st.markdown(
+        "<div class='section-header'>Volatility Signal Position</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        build_volatility_ruler_html(
+            predicted_volatility=predicted_volatility,
+            low_threshold=low_threshold,
+            high_threshold=high_threshold,
+            regime_colour=regime_colour,
+            interpretation=interpretation,
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_overview_command_center(kite):
@@ -2501,16 +2987,10 @@ def render_dashboard_home(kite, profile):
             )
 
     with tab_market:
-        render_placeholder_section(
-            "Market Data",
-            "This tab will show live NIFTY futures data in Live mode and historical market/futures data in Backtesting mode."
-        )
+        render_market_data_content(kite, mode)
 
     with tab_ml:
-        render_placeholder_section(
-            "ML Prediction",
-            "This tab will show predicted volatility, risk regime, and model inputs from the GJR-GARCH / ML prediction layer."
-        )
+        render_ml_prediction_content(kite, mode)
 
     with tab_plan:
         if mode == "Live Monitoring":
@@ -2583,6 +3063,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
