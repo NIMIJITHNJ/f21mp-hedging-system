@@ -1291,7 +1291,12 @@ def render_ml_prediction_content(kite, mode):
     )
 
     try:
-        signal = get_live_volatility_signal()
+        market_status = get_kite_market_status(kite)
+        signal = get_live_volatility_signal(
+            live_close=market_status.get("last_price"),
+            live_timestamp=market_status.get("quote_timestamp"),
+            use_live_price=bool(market_status.get("intraday_enabled")),
+        )
     except Exception as exc:
         st.markdown(
             "<div class='hedge-panel'>"
@@ -1312,6 +1317,9 @@ def render_ml_prediction_content(kite, mode):
     latest_close = float(signal.latest_close)
 
     signal_source_label = humanise_signal_source(signal.source)
+    live_quote_used = bool(getattr(signal, "live_quote_used", False))
+    signal_mode_label = "Intraday provisional" if live_quote_used else "Confirmed historical close"
+    signal_mode_note = getattr(signal, "data_freshness_note", "Latest confirmed historical close used")
 
     if risk_regime == "HIGH":
         regime_colour = "#f87171"
@@ -1375,9 +1383,14 @@ def render_ml_prediction_content(kite, mode):
             "Interpretation": "Most recent historical observation used by the prediction layer",
         },
         {
+            "Signal Component": "Signal mode",
+            "Value": signal_mode_label,
+            "Interpretation": signal_mode_note,
+        },
+        {
             "Signal Component": "Latest close in model dataset",
             "Value": "₹" + f"{latest_close:,.2f}",
-            "Interpretation": "Latest close available in the local NIFTY spot dataset",
+            "Interpretation": "Latest close used by the volatility prediction layer",
         },
         {
             "Signal Component": "Low-risk threshold",
@@ -1846,7 +1859,12 @@ def build_live_hedge_plan(kite):
 
     portfolio_value = stock_allocation
 
-    live_signal = get_live_volatility_signal()
+    market_status = get_kite_market_status(kite)
+    live_signal = get_live_volatility_signal(
+        live_close=market_status.get("last_price"),
+        live_timestamp=market_status.get("quote_timestamp"),
+        use_live_price=bool(market_status.get("intraday_enabled")),
+    )
     predicted_volatility = live_signal.predicted_volatility
     risk_regime = live_signal.risk_regime
     core_target_ratio = live_signal.core_target_ratio
