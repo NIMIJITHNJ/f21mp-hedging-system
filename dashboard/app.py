@@ -13,6 +13,8 @@ Run from the project root:
 """
 
 import os
+import subprocess
+import sys
 import sys
 import math
 import re
@@ -97,15 +99,15 @@ DISPLAY_LABELS = {
 
     "no_hedge": "No Hedge",
     "static_50": "Static 50% Hedge",
-    "rolling_min_variance": "Rolling Minimum Variance",
-    "gjr_scaled_minvar": "GJR-Scaled Minimum Variance",
+    "rolling_min_variance": "Rolling Minimum-Variance",
+    "gjr_scaled_minvar": "GJR-Scaled Minimum-Variance",
     "gjr_regime_dynamic": "GJR Regime Dynamic",
     "dcc_raw": "DCC Raw",
     "dcc_ema20_band0p10": "DCC EMA(20) + 10% No-Trade Band",
     "dcc_ema20_band0p05": "DCC EMA(20) + 5% No-Trade Band",
     "dcc_ema10_band0p10": "DCC EMA(10) + 10% No-Trade Band",
     "literature_vecm_static": "Literature VECM Static",
-    "portfolio_static_minvar": "Portfolio Static Minimum Variance",
+    "portfolio_static_minvar": "Portfolio Static Minimum-Variance",
 }
 
 
@@ -1020,6 +1022,150 @@ def _market_dataset_summary(csv_path, dataset_name, source_note):
         }
 
 
+
+def render_eod_data_update_panel(kite):
+    st.markdown(
+        "<div class='section-header'>EOD Data Update</div>",
+        unsafe_allow_html=True,
+    )
+
+    market_status = get_kite_market_status(kite)
+    market_is_open = bool(market_status.get("intraday_enabled"))
+
+    if market_is_open:
+        status_message = (
+            "The live feed appears to be active. EOD update should be run only after market close, "
+            "because intraday prices are provisional."
+        )
+        status_colour = "#fbbf24"
+    else:
+        status_message = (
+            "Market is closed or the feed is stale. You can update the confirmed EOD market data "
+            "for the latest completed trading day."
+        )
+        status_colour = "#4ade80"
+
+    # Default to the latest completed market-data date, not the next calendar/trading day.
+    # This is safer for EOD updates because the current day may not yet have a confirmed close.
+    default_date = datetime.now(IST).date()
+
+    quote_timestamp_raw = str(market_status.get("quote_timestamp") or "").strip()
+    quote_timestamp_clean = (
+        quote_timestamp_raw
+        .replace(" IST", "")
+        .replace(" UTC", "")
+        .replace(" GMT", "")
+        .strip()
+    )
+
+    quote_dt = pd.to_datetime(quote_timestamp_clean, errors="coerce")
+
+    if pd.notna(quote_dt):
+        default_date = quote_dt.date()
+
+    default_futures_symbol = "NIFTY26JUNFUT"
+
+    try:
+        cache = st.session_state.get("live_hedge_plan_cache", {})
+        snapshot = cache.get("snapshot") if isinstance(cache, dict) else None
+
+        if snapshot is None:
+            snapshot = get_live_broker_snapshot(kite)
+
+        contract = getattr(snapshot, "contract", None)
+        detected_symbol = getattr(contract, "tradingsymbol", None)
+
+        if detected_symbol:
+            default_futures_symbol = str(detected_symbol)
+    except Exception:
+        pass
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>Confirmed EOD data refresh</div>"
+        "<div class='placeholder-text'>"
+        "Use this after the market has closed to fetch confirmed NIFTY spot and NIFTY futures daily candles "
+        "from Kite and update the local CSV files used by the volatility model and dashboard."
+        "</div>"
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+        "<div class='placeholder-text' style='color:" + status_colour + ";'>"
+        + escape(status_message) +
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    with st.form("eod_update_form"):
+        col_date, col_symbol = st.columns([1, 1])
+
+        with col_date:
+            eod_date = st.date_input(
+                "EOD date to update",
+                value=default_date,
+                key="eod_update_date",
+            )
+
+        with col_symbol:
+            futures_symbol = st.text_input(
+                "NIFTY futures symbol",
+                value=default_futures_symbol,
+                key="eod_update_futures_symbol",
+                help="Auto-detected from the current live hedge snapshot. Edit only if the detected contract is incorrect.",
+            )
+
+        button_disabled = market_is_open or not str(futures_symbol).strip()
+
+        run_update = st.form_submit_button(
+            "Update confirmed EOD data",
+            disabled=button_disabled,
+        )
+
+    if market_is_open:
+        st.caption("Button disabled while the market feed is active. Run after market close.")
+
+    if run_update:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        script_path = os.path.join(project_root, "scripts", "update_eod_market_data.py")
+
+        if not os.path.exists(script_path):
+            st.error("EOD updater script not found: " + script_path)
+            return
+
+        command = [
+            sys.executable,
+            script_path,
+            "--date",
+            eod_date.strftime("%Y-%m-%d"),
+            "--futures-symbol",
+            str(futures_symbol).strip(),
+        ]
+
+        with st.spinner("Fetching confirmed EOD market data from Kite and updating local CSV files ..."):
+            completed = subprocess.run(
+                command,
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+
+        if completed.returncode == 0:
+            st.success("EOD market data updated successfully.")
+
+            st.session_state.pop("live_hedge_plan_cache", None)
+
+            with st.expander("Updater output", expanded=False):
+                st.code(completed.stdout or "No output returned.", language="text")
+
+            st.info("Restart or refresh the dashboard to reload the updated CSV data into all tabs.")
+        else:
+            st.error("EOD update failed.")
+
+            with st.expander("Error details", expanded=True):
+                st.code((completed.stderr or completed.stdout or "No error details returned."), language="text")
+
+
+
 def render_market_data_content(kite, mode):
     st.markdown(
         "<div class='section-header'>Market Data</div>",
@@ -1189,6 +1335,9 @@ def render_market_data_content(kite, mode):
                 plt.close(fig)
 
 
+
+
+    render_eod_data_update_panel(kite)
 
 
 def humanise_signal_source(source):
@@ -1850,6 +1999,301 @@ def format_money_html(value, decimals=0):
         return "&#8377;0"
 
 
+
+def _load_close_series_for_live_ratio(csv_path, label):
+    if not os.path.exists(csv_path):
+        return pd.Series(dtype=float, name=label)
+
+    try:
+        df = pd.read_csv(csv_path)
+
+        if "date" not in df.columns or "close" not in df.columns:
+            return pd.Series(dtype=float, name=label)
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df = df.dropna(subset=["date", "close"]).sort_values("date")
+
+        if df.empty:
+            return pd.Series(dtype=float, name=label)
+
+        series = df.set_index("date")["close"].astype(float)
+        series.name = label
+        return series.sort_index()
+
+    except Exception:
+        return pd.Series(dtype=float, name=label)
+
+
+def _append_live_price_for_live_ratio(series, live_price, live_timestamp, use_live_price):
+    if not use_live_price or live_price is None:
+        return series, False
+
+    try:
+        live_price = float(live_price)
+    except Exception:
+        return series, False
+
+    if not np.isfinite(live_price) or live_price <= 0:
+        return series, False
+
+    timestamp_raw = str(live_timestamp or "").strip()
+    timestamp_clean = (
+        timestamp_raw
+        .replace(" IST", "")
+        .replace(" UTC", "")
+        .replace(" GMT", "")
+        .strip()
+    )
+
+    parsed = pd.to_datetime(timestamp_clean, errors="coerce")
+
+    if pd.isna(parsed):
+        parsed = pd.Timestamp(datetime.now(IST).date())
+    else:
+        parsed = pd.Timestamp(parsed).normalize()
+
+    updated = series.copy().sort_index()
+    updated.loc[parsed] = live_price
+    updated = updated.sort_index()
+
+    return updated, True
+
+
+
+def compute_dynamic_live_hedge_ratio(
+    live_spot_close=None,
+    live_futures_close=None,
+    live_timestamp=None,
+    use_live_price=False,
+    lookback_days=90,
+    fallback_ratio=0.40,
+):
+    """Select a live hedge-ratio strategy using recent spot/futures return memory.
+
+    The module compares multiple candidate hedge strategies on recent paired
+    NIFTY spot and futures returns. The selected candidate ratio is then passed
+    to the Hedra volatility risk gate in build_live_hedge_plan().
+    """
+
+    def safe_ratio(value, upper=1.25):
+        try:
+            value = float(value)
+        except Exception:
+            return 0.0
+
+        if not np.isfinite(value):
+            return 0.0
+
+        return max(0.0, min(value, upper))
+
+    def score_candidate(recent_returns, ratio):
+        ratio = safe_ratio(ratio)
+
+        hedged = recent_returns["spot_close"] - ratio * recent_returns["futures_close"]
+
+        hedged_vol = float(hedged.std() * np.sqrt(252))
+        downside = hedged[hedged < 0.0]
+        downside_vol = float(downside.std() * np.sqrt(252)) if len(downside) >= 5 else 0.0
+
+        if not np.isfinite(hedged_vol):
+            hedged_vol = 999.0
+
+        if not np.isfinite(downside_vol):
+            downside_vol = 999.0
+
+        # Small ratio penalty avoids selecting unnecessarily large hedge ratios
+        # when two strategies have very similar recent hedged-risk scores.
+        score = hedged_vol + (0.25 * downside_vol) + (0.002 * abs(ratio))
+
+        return {
+            "hedged_volatility": hedged_vol,
+            "downside_volatility": downside_vol,
+            "score": float(score),
+        }
+
+    spot_path = os.path.join("data", "raw", "NIFTY50_spot.csv")
+    futures_path = os.path.join("data", "raw", "NIFTY_futures_continuous.csv")
+
+    spot = _load_close_series_for_live_ratio(spot_path, "spot_close")
+    futures = _load_close_series_for_live_ratio(futures_path, "futures_close")
+
+    fallback_ratio = safe_ratio(fallback_ratio)
+
+    if spot.empty or futures.empty:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_volatility_regime_target",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Live hedge-ratio strategy selector",
+            "source": "fallback_missing_price_history",
+            "mode": "fallback",
+            "data_date": "N/A",
+            "lookback_days": 0,
+            "strategy_candidates": [],
+            "note": "Spot or futures price history was unavailable, so the volatility-regime fallback target was used.",
+        }
+
+    spot, live_spot_used = _append_live_price_for_live_ratio(
+        series=spot,
+        live_price=live_spot_close,
+        live_timestamp=live_timestamp,
+        use_live_price=use_live_price,
+    )
+
+    futures, live_futures_used = _append_live_price_for_live_ratio(
+        series=futures,
+        live_price=live_futures_close,
+        live_timestamp=live_timestamp,
+        use_live_price=use_live_price,
+    )
+
+    merged = pd.concat([spot, futures], axis=1).dropna().sort_index()
+
+    if len(merged) < 40:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_insufficient_history",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Live hedge-ratio strategy selector",
+            "source": "fallback_insufficient_price_history",
+            "mode": "fallback",
+            "data_date": merged.index[-1].strftime("%Y-%m-%d") if not merged.empty else "N/A",
+            "lookback_days": len(merged),
+            "strategy_candidates": [],
+            "note": "Insufficient paired spot/futures history was available, so the volatility-regime fallback target was used.",
+        }
+
+    returns = np.log(merged).diff().dropna()
+    recent_returns = returns.tail(lookback_days).dropna()
+
+    if len(recent_returns) < 30:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_insufficient_return_memory",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Live hedge-ratio strategy selector",
+            "source": "fallback_insufficient_return_memory",
+            "mode": "fallback",
+            "data_date": merged.index[-1].strftime("%Y-%m-%d"),
+            "lookback_days": len(recent_returns),
+            "strategy_candidates": [],
+            "note": "Insufficient recent return memory was available, so the volatility-regime fallback target was used.",
+        }
+
+    futures_variance = float(recent_returns["futures_close"].var())
+
+    if not np.isfinite(futures_variance) or futures_variance <= 0:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_invalid_futures_variance",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Live hedge-ratio strategy selector",
+            "source": "fallback_invalid_futures_variance",
+            "mode": "fallback",
+            "data_date": merged.index[-1].strftime("%Y-%m-%d"),
+            "lookback_days": len(recent_returns),
+            "strategy_candidates": [],
+            "note": "Futures variance was invalid, so the volatility-regime fallback target was used.",
+        }
+
+    covariance = float(recent_returns["spot_close"].cov(recent_returns["futures_close"]))
+    raw_min_variance_ratio = covariance / futures_variance
+
+    if not np.isfinite(raw_min_variance_ratio):
+        raw_min_variance_ratio = fallback_ratio
+
+    corr = float(recent_returns["spot_close"].corr(recent_returns["futures_close"]))
+    if not np.isfinite(corr):
+        corr = 0.0
+
+    downside_returns = recent_returns[recent_returns["spot_close"] < 0.0]
+
+    if len(downside_returns) >= 20 and float(downside_returns["futures_close"].var()) > 0:
+        downside_ratio = float(
+            downside_returns["spot_close"].cov(downside_returns["futures_close"])
+            / downside_returns["futures_close"].var()
+        )
+    else:
+        downside_ratio = raw_min_variance_ratio
+
+    candidate_definitions = [
+        ("no_hedge", "No hedge", 0.0),
+        ("static_50", "Static 50% hedge", 0.50),
+        ("rolling_min_variance", "Rolling minimum-variance hedge", raw_min_variance_ratio),
+        ("downside_min_variance", "Downside minimum-variance hedge", downside_ratio),
+        (
+            "correlation_scaled_min_variance",
+            "Correlation-scaled minimum-variance hedge",
+            raw_min_variance_ratio * abs(corr),
+        ),
+    ]
+
+    candidate_rows = []
+
+    for strategy_key, strategy_label, raw_ratio in candidate_definitions:
+        cleaned_ratio = safe_ratio(raw_ratio)
+        score = score_candidate(recent_returns, cleaned_ratio)
+
+        candidate_rows.append(
+            {
+                "strategy": strategy_key,
+                "strategy_label": strategy_label,
+                "raw_ratio": float(raw_ratio) if np.isfinite(raw_ratio) else 0.0,
+                "candidate_ratio": cleaned_ratio,
+                "hedged_volatility": score["hedged_volatility"],
+                "downside_volatility": score["downside_volatility"],
+                "selection_score": score["score"],
+            }
+        )
+
+    ranked = sorted(candidate_rows, key=lambda row: row["selection_score"])
+    selected = ranked[0]
+
+    mode = "intraday_provisional" if live_spot_used and live_futures_used else "confirmed_eod_memory"
+    source = (
+        "live_strategy_selector_intraday"
+        if mode == "intraday_provisional"
+        else "live_strategy_selector_eod_memory"
+    )
+
+    note = (
+        "Multiple live hedge-ratio candidates were compared using recent paired spot/futures return memory. "
+        f"The selected strategy was {selected['strategy_label']} with the lowest recent hedged-risk score."
+    )
+
+    if mode == "intraday_provisional":
+        note += " Fresh Kite spot and futures prices were appended as provisional intraday observations before strategy selection."
+    else:
+        note += " Latest confirmed EOD spot and futures history was used for strategy selection."
+
+    return {
+        "candidate_ratio": float(selected["candidate_ratio"]),
+        "raw_min_variance_ratio": float(raw_min_variance_ratio),
+        "raw_selected_strategy_ratio": float(selected["raw_ratio"]),
+        "selected_strategy": selected["strategy"],
+        "selected_strategy_label": selected["strategy_label"],
+        "selected_strategy_score": float(selected["selection_score"]),
+        "method": "Live hedge-ratio strategy selector",
+        "source": source,
+        "mode": mode,
+        "data_date": merged.index[-1].strftime("%Y-%m-%d"),
+        "lookback_days": len(recent_returns),
+        "strategy_candidates": candidate_rows,
+        "note": note,
+    }
+
+
+
+
 def build_live_hedge_plan(kite):
     snapshot = get_live_broker_snapshot(kite)
 
@@ -1867,7 +2311,20 @@ def build_live_hedge_plan(kite):
     )
     predicted_volatility = live_signal.predicted_volatility
     risk_regime = live_signal.risk_regime
-    core_target_ratio = live_signal.core_target_ratio
+
+    dynamic_hedge_signal = compute_dynamic_live_hedge_ratio(
+        live_spot_close=market_status.get("last_price"),
+        live_futures_close=snapshot.futures_price,
+        live_timestamp=market_status.get("quote_timestamp"),
+        use_live_price=bool(market_status.get("intraday_enabled")),
+        fallback_ratio=live_signal.core_target_ratio,
+    )
+
+    candidate_hedge_ratio = dynamic_hedge_signal["candidate_ratio"]
+    core_target_ratio, live_risk_gate_note = apply_hedra_risk_gate(
+        candidate_hedge_ratio,
+        risk_regime,
+    )
 
     margin_per_contract = snapshot.futures_price * snapshot.contract.lot_size * 0.12
 
@@ -1896,6 +2353,20 @@ def build_live_hedge_plan(kite):
         "predicted_volatility": predicted_volatility,
         "risk_regime": risk_regime,
         "core_target_ratio": core_target_ratio,
+        "candidate_hedge_ratio": candidate_hedge_ratio,
+        "raw_min_variance_ratio": dynamic_hedge_signal.get("raw_min_variance_ratio"),
+        "live_hedge_ratio_method": dynamic_hedge_signal.get("method"),
+        "live_hedge_ratio_source": dynamic_hedge_signal.get("source"),
+        "live_hedge_ratio_mode": dynamic_hedge_signal.get("mode"),
+        "live_hedge_ratio_data_date": dynamic_hedge_signal.get("data_date"),
+        "live_hedge_ratio_lookback_days": dynamic_hedge_signal.get("lookback_days"),
+        "live_risk_gate_note": live_risk_gate_note,
+        "live_hedge_ratio_note": dynamic_hedge_signal.get("note"),
+        "selected_live_strategy": dynamic_hedge_signal.get("selected_strategy"),
+        "selected_live_strategy_label": dynamic_hedge_signal.get("selected_strategy_label"),
+        "selected_live_strategy_score": dynamic_hedge_signal.get("selected_strategy_score"),
+        "raw_selected_strategy_ratio": dynamic_hedge_signal.get("raw_selected_strategy_ratio"),
+        "live_strategy_candidates": dynamic_hedge_signal.get("strategy_candidates"),
         "ml_signal_source": live_signal.source,
         "ml_signal_model": live_signal.model,
         "ml_signal_data_date": live_signal.data_date,
@@ -2030,17 +2501,128 @@ def render_live_hedge_plan(kite):
     plan_html = "".join("<li>" + escape(ui_text(line)) + "</li>" for line in plan_lines)
     exec_html = "".join("<li>" + escape(ui_text(line)) + "</li>" for line in exec_lines)
 
+    strategy_method = str(inputs.get("live_hedge_ratio_method", "Live hedge-ratio strategy selector"))
+    selected_strategy_label = str(inputs.get("selected_live_strategy_label", "N/A"))
+    strategy_mode = str(inputs.get("live_hedge_ratio_mode", "confirmed_eod_memory"))
+    strategy_date = str(inputs.get("live_hedge_ratio_data_date", "N/A"))
+    strategy_source = str(inputs.get("live_hedge_ratio_source", "N/A"))
+    strategy_note = str(inputs.get("live_hedge_ratio_note", "Latest available spot/futures memory used."))
+    risk_gate_note = str(inputs.get("live_risk_gate_note", "Volatility risk gate applied."))
+
+    try:
+        candidate_ratio_display = f"{float(inputs.get('candidate_hedge_ratio', result.execution_target_hedge_ratio)):.2%}"
+    except Exception:
+        candidate_ratio_display = "N/A"
+
+    try:
+        raw_selected_ratio_display = f"{float(inputs.get('raw_selected_strategy_ratio', inputs.get('candidate_hedge_ratio', 0.0))):.2%}"
+    except Exception:
+        raw_selected_ratio_display = "N/A"
+
     st.markdown(
-        "<div class='section-header'>Planner Explanation</div>"
+        "<div class='section-header'>Applied Hedge-Ratio Strategy</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
         "<div class='hedge-panel'>"
-        "<div class='placeholder-title'>Planning trace</div>"
-        "<ul class='placeholder-text'>" + plan_html + "</ul>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Strategy Engine</div>"
+        "<div class='stat-value-sm'>" + escape(strategy_method) + "</div>"
+        "<div class='stat-meta'>" + escape(strategy_mode
+        .replace("confirmed_eod_memory", "Confirmed EOD memory")
+        .replace("intraday_provisional", "Intraday provisional")
+        .replace("fallback", "Fallback")) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Selected Strategy</div>"
+        "<div class='stat-value-sm'>" + escape(selected_strategy_label) + "</div>"
+        "<div class='stat-meta'>Raw selected ratio: " + escape(raw_selected_ratio_display) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Final Hedra Target</div>"
+        "<div class='stat-value-sm'>" + f"{result.execution_target_hedge_ratio:.2%}" + "</div>"
+        "<div class='stat-meta'>After volatility risk gate</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Strategy Data Date</div>"
+        "<div class='stat-value-sm'>" + escape(strategy_date) + "</div>"
+        "<div class='stat-meta'>" + escape(strategy_source
+        .replace("live_strategy_selector_eod_memory", "Live strategy selector using confirmed EOD memory")
+        .replace("live_strategy_selector_intraday", "Live strategy selector using intraday quote memory")
+        .replace("_", " ")) + "</div>"
+        "</div>"
+
+        "</div>"
         "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
-        "<div class='placeholder-title'>Execution trace</div>"
-        "<ul class='placeholder-text'>" + exec_html + "</ul>"
+        "<div class='placeholder-text'>"
+        + escape(strategy_note) +
+        " " +
+        escape(risk_gate_note) +
+        "</div>"
         "</div>",
         unsafe_allow_html=True,
     )
+
+    st.markdown(
+        "<div class='section-header'>Decision Rationale &amp; Execution Details</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:18px;'>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:16px;'>"
+        "<div class='placeholder-title'>Planning rationale</div>"
+        "<div class='placeholder-text'>"
+        "The planner converts the current volatility regime, target hedge ratio, existing hedge position, "
+        "and turnover-cost setting into an actionable hedge decision. The result is an interpretable hedge instruction "
+        "rather than a direct black-box trade."
+        "</div>"
+        "</div>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:16px;'>"
+        "<div class='placeholder-title'>Execution sizing</div>"
+        "<div class='placeholder-text'>"
+        "The execution layer translates the planner target into NIFTY futures contracts, checks the required margin, "
+        "rounds the position to tradable contract units, and reports the achieved hedge ratio after rounding."
+        "</div>"
+        "</div>"
+
+        "</div>"
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+        "<div class='placeholder-text'>"
+        "The detailed planning and execution trace is retained below for transparency and auditability."
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("View technical planning and execution trace", expanded=False):
+        st.markdown(
+            "<div class='hedge-panel'>"
+            "<div style='display:grid;grid-template-columns:1fr 1fr;gap:22px;'>"
+
+            "<div>"
+            "<div class='placeholder-title'>Planning trace</div>"
+            "<ul class='placeholder-text'>" + plan_html + "</ul>"
+            "</div>"
+
+            "<div>"
+            "<div class='placeholder-title'>Execution trace</div>"
+            "<ul class='placeholder-text'>" + exec_html + "</ul>"
+            "</div>"
+
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 
@@ -2198,7 +2780,30 @@ def render_live_explanation(kite):
         for title, body in narrative_sections
     )
 
+    strategy_method = str(inputs.get("live_hedge_ratio_method", "Live hedge-ratio strategy selector"))
+    selected_strategy_label = str(inputs.get("selected_live_strategy_label", "N/A"))
+    strategy_mode = str(inputs.get("live_hedge_ratio_mode", "confirmed_eod_memory"))
+    strategy_date = str(inputs.get("live_hedge_ratio_data_date", "N/A"))
+    risk_gate_note = str(inputs.get("live_risk_gate_note", "Volatility risk gate applied."))
+
+    try:
+        candidate_ratio = f"{float(inputs.get('candidate_hedge_ratio', target_ratio)):.2%}"
+    except Exception:
+        candidate_ratio = "N/A"
+
+    try:
+        raw_selected_strategy_ratio = f"{float(inputs.get('raw_selected_strategy_ratio', inputs.get('candidate_hedge_ratio', 0.0))):.2%}"
+    except Exception:
+        raw_selected_strategy_ratio = "N/A"
+
     factor_rows = [
+        ("Hedge ratio engine", strategy_method),
+        ("Selected live strategy", selected_strategy_label),
+        ("Strategy mode", strategy_mode.replace("_", " ").title()),
+        ("Strategy data date", strategy_date),
+        ("Raw selected strategy ratio", raw_selected_strategy_ratio),
+        ("Candidate ratio before risk gate", candidate_ratio),
+        ("Risk gate rule", risk_gate_note),
         ("Risk regime", risk_regime),
         ("Predicted volatility", f"{predicted_volatility:.2%}"),
         ("Planner action", action),
@@ -2723,6 +3328,35 @@ def render_historical_hedge_plan_replay():
         f"The target hedge position is {target_contracts} short NIFTY futures contract(s), with estimated margin requirement of ₹{margin_required:,.2f}.",
     ]
 
+    st.session_state["historical_replay_context"] = {
+        "selected_date": str(selected_date),
+        "hedge_ratio_source": selected_source_name,
+        "candidate_model": ui_label(selected_strategy),
+        "planner_action": ui_label(planner_action),
+        "raw_candidate_ratio": f"{raw_target_ratio:.2%}",
+        "previous_target_ratio": f"{previous_ratio:.2%}",
+        "target_ratio": f"{target_ratio:.2%}",
+        "achieved_hedge_ratio": f"{achieved_hedge_ratio:.2%}",
+        "risk_regime": str(risk_regime),
+        "predicted_volatility": "Not available" if predicted_vol is None else f"{predicted_vol:.2%}",
+        "risk_gate_note": risk_gate_note,
+        "previous_gate_note": previous_gate_note,
+        "previous_contracts": str(previous_target_contracts),
+        "target_contracts": str(target_contracts),
+        "contracts_to_trade_now": f"{contracts_to_trade_now:+d}",
+        "margin_status": "Sufficient" if margin_ok else "Insufficient",
+        "margin_required": f"₹{margin_required:,.2f}",
+        "margin_reserve": f"₹{margin_reserve:,.2f}",
+        "margin_after_trade": f"₹{margin_available_after_trade:,.2f}",
+        "futures_price_date": futures_price_date,
+        "futures_close": f"₹{futures_price:,.2f}",
+        "lot_size": str(lot_size),
+        "contract_value": f"₹{contract_value:,.2f}",
+        "target_hedge_value": f"₹{target_hedge_value:,.2f}",
+        "lot_note": lot_note,
+        "trace_lines": trace_lines,
+    }
+
     st.markdown(
         "<div class='section-header'>Replay Explanation Trace</div>",
         unsafe_allow_html=True,
@@ -2745,6 +3379,165 @@ def render_historical_hedge_plan_replay():
         + "</div>",
         unsafe_allow_html=True,
     )
+
+
+
+
+def render_historical_explanation():
+    st.markdown(
+        "<div class='section-header'>Historical Explanation</div>",
+        unsafe_allow_html=True,
+    )
+
+    ctx = st.session_state.get("historical_replay_context")
+
+    if not ctx:
+        st.markdown(
+            "<div class='hedge-panel'>"
+            "<div class='placeholder-title'>No replay decision selected yet</div>"
+            "<div class='placeholder-text'>"
+            "Open the Hedge Plan tab first and select a historical replay date. "
+            "The Explanation tab will then explain that selected backtest hedge decision."
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    margin_colour = "#4ade80" if ctx.get("margin_status") == "Sufficient" else "#f87171"
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div class='placeholder-title'>Selected historical replay decision</div>"
+        "<div class='placeholder-text'>"
+        "This explanation is linked to the currently selected historical replay in the Hedge Plan tab."
+        "</div>"
+        "<div style='height:1px;background:#2a2a30;margin:18px 0;'></div>"
+
+        "<div style='display:grid;grid-template-columns:repeat(5,1fr);gap:18px;'>"
+
+        "<div>"
+        "<div class='stat-label'>Selected Date</div>"
+        "<div class='stat-value-sm'>" + escape(ctx.get("selected_date", "N/A")) + "</div>"
+        "<div class='stat-meta'>" + escape(ctx.get("candidate_model", "N/A")) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Planner Action</div>"
+        "<div class='stat-value-sm'>" + escape(ctx.get("planner_action", "N/A")) + "</div>"
+        "<div class='stat-meta'>Contracts to trade: " + escape(ctx.get("contracts_to_trade_now", "N/A")) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Risk Regime</div>"
+        "<div class='stat-value-sm'>" + escape(ctx.get("risk_regime", "N/A")) + "</div>"
+        "<div class='stat-meta'>Predicted volatility: " + escape(ctx.get("predicted_volatility", "N/A")) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Hedra Target Ratio</div>"
+        "<div class='stat-value-sm'>" + escape(ctx.get("target_ratio", "N/A")) + "</div>"
+        "<div class='stat-meta'>Achieved: " + escape(ctx.get("achieved_hedge_ratio", "N/A")) + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Margin Check</div>"
+        "<div class='stat-value-sm' style='color:" + margin_colour + ";'>" + escape(ctx.get("margin_status", "N/A")) + "</div>"
+        "<div class='stat-meta'>Required: " + escape(ctx.get("margin_required", "N/A")) + "</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='section-header'>Why this decision was generated</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='hedge-panel'>"
+        "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:18px;'>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:16px;'>"
+        "<div class='placeholder-title'>1. Risk-gated hedge target</div>"
+        "<div class='placeholder-text'>"
+        "The selected hedge-ratio model produced a raw candidate hedge ratio of <strong>" + escape(ctx.get("raw_candidate_ratio", "N/A")) + "</strong>. "
+        "The volatility layer classified the date as <strong>" + escape(ctx.get("risk_regime", "N/A")) + "</strong>, so Hedra applied this rule: "
+        + escape(ctx.get("risk_gate_note", "N/A")) +
+        "</div>"
+        "</div>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:16px;'>"
+        "<div class='placeholder-title'>2. Planner action</div>"
+        "<div class='placeholder-text'>"
+        "The previous target hedge ratio was <strong>" + escape(ctx.get("previous_target_ratio", "N/A")) + "</strong>, while the selected date target is "
+        "<strong>" + escape(ctx.get("target_ratio", "N/A")) + "</strong>. This changed the target position from "
+        "<strong>" + escape(ctx.get("previous_contracts", "N/A")) + "</strong> to <strong>" + escape(ctx.get("target_contracts", "N/A")) + "</strong> contracts, "
+        "resulting in the planner action <strong>" + escape(ctx.get("planner_action", "N/A")) + "</strong>."
+        "</div>"
+        "</div>"
+
+        "<div style='background:#111116;border:1px solid #2a2a30;border-radius:10px;padding:16px;'>"
+        "<div class='placeholder-title'>3. Futures execution sizing</div>"
+        "<div class='placeholder-text'>"
+        "The execution layer used the historical futures close of <strong>" + escape(ctx.get("futures_close", "N/A")) + "</strong> from "
+        "<strong>" + escape(ctx.get("futures_price_date", "N/A")) + "</strong>, with lot size <strong>" + escape(ctx.get("lot_size", "N/A")) + "</strong>. "
+        "This gives an estimated contract value of <strong>" + escape(ctx.get("contract_value", "N/A")) + "</strong> and a target hedge value of "
+        "<strong>" + escape(ctx.get("target_hedge_value", "N/A")) + "</strong>."
+        "</div>"
+        "</div>"
+
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    decision_rows = [
+        ["Selected date", ctx.get("selected_date", "N/A")],
+        ["Hedge-ratio source", ctx.get("hedge_ratio_source", "N/A")],
+        ["Candidate model", ctx.get("candidate_model", "N/A")],
+        ["Risk regime", ctx.get("risk_regime", "N/A")],
+        ["Predicted volatility", ctx.get("predicted_volatility", "N/A")],
+        ["Raw candidate hedge ratio", ctx.get("raw_candidate_ratio", "N/A")],
+        ["Final Hedra target ratio", ctx.get("target_ratio", "N/A")],
+        ["Target hedge contracts", ctx.get("target_contracts", "N/A")],
+        ["Contracts to trade now", ctx.get("contracts_to_trade_now", "N/A")],
+        ["Margin status", ctx.get("margin_status", "N/A")],
+        ["Margin required", ctx.get("margin_required", "N/A")],
+        ["Margin reserve", ctx.get("margin_reserve", "N/A")],
+        ["Margin after trade", ctx.get("margin_after_trade", "N/A")],
+        ["Lot-size note", ctx.get("lot_note", "N/A")],
+    ]
+
+    st.markdown(
+        "<div class='section-header'>Decision Factors</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.dataframe(
+        pd.DataFrame(decision_rows, columns=["Decision Factor", "Value"]),
+        hide_index=True,
+        width="stretch",
+    )
+
+    trace_lines = ctx.get("trace_lines", [])
+
+    with st.expander("View replay technical trace", expanded=False):
+        if trace_lines:
+            st.markdown(
+                "<div class='hedge-panel'>"
+                + "".join(
+                    f"<div class='trace-line'>{escape(str(line))}</div>"
+                    for line in trace_lines
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info("No replay trace is available for this selected decision.")
+
+
 
 
 def render_backtest_evaluation():
@@ -2975,70 +3768,49 @@ def render_dashboard_home(kite, profile):
         label_visibility="collapsed",
     )
 
-    tab_overview, tab_portfolio, tab_market, tab_ml, tab_plan, tab_explain, tab_eval, tab_audit = st.tabs([
-        "Overview",
-        "Portfolio",
-        "Market Data",
-        "ML Prediction",
-        "Hedge Plan",
-        "Explanation",
-        "Benchmark Evaluation",
-        "Audit Log",
-    ])
+    if mode == "Live Monitoring":
+        tab_overview, tab_portfolio, tab_market, tab_ml, tab_plan, tab_explain = st.tabs([
+            "Overview",
+            "Portfolio",
+            "Market Data",
+            "ML Prediction",
+            "Hedge Plan",
+            "Explanation",
+        ])
 
-    with tab_overview:
-        if mode == "Live Monitoring":
+        with tab_overview:
             render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_email)
-        else:
-            render_placeholder_section(
-                "Historical Backtesting Overview",
-                "This section will summarise the selected historical dataset, date range, portfolio value, risk regime, and planning-based hedge result."
-            )
 
-    with tab_portfolio:
-        if mode == "Live Monitoring":
+        with tab_portfolio:
             render_live_portfolio_content(kite)
-        else:
-            render_placeholder_section(
-                "Historical Portfolio Snapshot",
-                "This tab will load portfolio values from the selected backtest dataset instead of live Kite quotes."
-            )
 
-    with tab_market:
-        render_market_data_content(kite, mode)
+        with tab_market:
+            render_market_data_content(kite, mode)
 
-    with tab_ml:
-        render_ml_prediction_content(kite, mode)
+        with tab_ml:
+            render_ml_prediction_content(kite, mode)
 
-    with tab_plan:
-        if mode == "Live Monitoring":
+        with tab_plan:
             render_live_hedge_plan(kite)
-        else:
+
+        with tab_explain:
+            render_live_explanation(kite)
+
+    else:
+        tab_plan, tab_explain, tab_eval = st.tabs([
+            "Hedge Plan",
+            "Explanation",
+            "Benchmark Evaluation",
+        ])
+
+        with tab_plan:
             render_historical_hedge_plan_replay()
 
-    with tab_explain:
-        if mode == "Live Monitoring":
-            render_live_explanation(kite)
-        else:
-            render_placeholder_section(
-                "Historical Explanation",
-                "This tab will show historical planner reasoning, risk-gating logic, candidate hedge-ratio interpretation, and futures execution justification."
-            )
+        with tab_explain:
+            render_historical_explanation()
 
-    with tab_eval:
-        if mode == "Historical Backtesting":
+        with tab_eval:
             render_backtest_evaluation()
-        else:
-            render_placeholder_section(
-                "Benchmark Evaluation",
-                "Switch to Historical Backtesting mode to load actual saved backtest results and strategy comparisons."
-            )
-
-    with tab_audit:
-        render_placeholder_section(
-            "Audit Log",
-            "This tab will show traceable decision records for live and historical hedge recommendations."
-        )
 
 
 def main():
