@@ -48,7 +48,7 @@ PLANNER_TIMEOUT_SECONDS = 5.0
 # 100 hedge bps = hedge ratio 1.00
 MAX_HEDGE_BPS = 150
 NO_TRADE_BAND_BPS = 5
-RISK_ADJUSTMENT_BPS = {"LOW": -10, "MEDIUM": 0, "HIGH": 10}
+RISK_ADJUSTMENT_BPS = {"LOW": 0, "MEDIUM": 0, "HIGH": 0}  # Regime cap is applied before planning.
 DEFAULT_TRANSACTION_COST_BPS = 2.0
 DEFAULT_MAX_TRADE_COST_MICROS = 50
 DEMO_MAX_TRADE_COST_MICROS = 250
@@ -305,7 +305,8 @@ def fallback_actions(state: PreparedPlanningState) -> list[str]:
 def explain(state: PreparedPlanningState, actions: list[str], used_fallback: bool) -> list[str]:
     reasons = [
         f"Risk regime={state.risk_regime}; predicted next-day volatility={state.predicted_volatility:.6f}.",
-        f"Core ratio={bps_to_ratio(state.core_target_bps):.2f}; risk adjustment={state.risk_adjustment_bps:+d} hedge bps.",
+        f"Planner received risk-gated target ratio={bps_to_ratio(state.core_target_bps):.2f}; "
+        f"extra planner adjustment={state.risk_adjustment_bps:+d} hedge bps.",
         f"Current ratio={bps_to_ratio(state.current_hedge_bps):.2f}; planner target={bps_to_ratio(state.planner_target_bps):.2f}; requested change={state.adjustment_bps:+d} hedge bps.",
         f"Estimated turnover cost={state.estimated_trade_cost_micros} micro-units; configured limit={state.max_trade_cost_micros} micro-units.",
     ]
