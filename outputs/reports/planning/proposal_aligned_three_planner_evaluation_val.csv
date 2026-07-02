@@ -1,0 +1,4 @@
+planner_variant,cases,correct_decisions,decision_correctness_rate,enhsp_valid_plan_rate,val_valid_plan_rate,fallback_count,fallback_rate,avg_planning_time_ms,median_planning_time_ms,max_planning_time_ms,within_5_seconds,avg_plan_length,avg_transaction_cost_micros,avg_turnover_contracts,avg_hedge_gap_contracts,max_hedge_gap_contracts,constraint_success,pddl_traceability,explanation_available
+current_rule_guided_up,12,12,1.0,1.0,1.0,0,0.0,754.753,805.231,1238.271,True,1.167,88.167,1.5,0.75,3.0,6/6,True,True
+autonomous_symbolic_planner,12,12,1.0,1.0,1.0,0,0.0,648.314,262.519,1218.985,True,1.25,450.0,1.5,0.75,3.0,6/6,True,True
+numerical_planner,12,12,1.0,1.0,1.0,0,0.0,740.448,739.612,1223.177,True,1.25,450.0,1.5,0.75,3.0,6/6,True,True
