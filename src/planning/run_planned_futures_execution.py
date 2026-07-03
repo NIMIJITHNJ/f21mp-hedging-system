@@ -36,13 +36,14 @@ from src.planning.futures_execution import (
     FuturesExecutionResult,
     calculate_futures_execution,
 )
-from src.planning.run_hedge_planner import (
-    DEFAULT_MAX_TRADE_COST_MICROS,
-    DEMO_MAX_TRADE_COST_MICROS,
-    HedgePlanningInput,
-    PlanningResult,
-    solve_planning_input,
+from src.planning.numerical_planner import (
+    NumericalPlannerInput,
+    NumericalPlannerResult,
+    solve_numerical_planning,
 )
+
+DEFAULT_MAX_TRADE_COST_MICROS = 5000
+DEMO_MAX_TRADE_COST_MICROS = 5000
 
 REPORT_DIR = ROOT / "outputs" / "reports" / "planning"
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -155,30 +156,26 @@ def derive_current_hedge_ratio(
 
 
 def approved_execution_target_ratio(
-    planning_result: PlanningResult,
+    planning_result: NumericalPlannerResult,
     current_hedge_ratio: float,
+    portfolio_value: float,
 ) -> float:
-    """
-    Pass the planner target to execution only when a trade action is approved.
-
-    For HOLD_POSITION, including ROLL_FUTURES_FORWARD -> HOLD_POSITION, preserve
-    the existing hedge ratio so the execution layer does not accidentally
-    recommend an unapproved rebalance.
-    """
-    actions = set(planning_result.action_sequence)
+    # Pass the numerical planner executable contract decision to execution.
+    state = planning_result.prepared_state
+    actions = {str(action).upper() for action in planning_result.action_sequence}
 
     if actions.intersection(TRADE_ACTIONS):
-        planner_target_bps = planning_result.prepared_state[
-            "planner_target_bps"
-        ]
+        executable_contracts = float(state.get('executable_contracts', 0))
+        contract_notional = float(state.get('contract_notional', 0))
 
-        return float(
-            planner_target_bps
-            / 100.0
-        )
+        if portfolio_value > 0 and contract_notional > 0:
+            return float(
+                executable_contracts
+                * contract_notional
+                / portfolio_value
+            )
 
     return float(current_hedge_ratio)
-
 
 def split_actions(
     action_sequence: list[str],
@@ -206,7 +203,7 @@ def split_actions(
 
 
 def determine_status(
-    planning_result: PlanningResult,
+    planning_result: NumericalPlannerResult,
     execution_result: FuturesExecutionResult,
 ) -> str:
     """Create a top-level integrated status for dashboard and audit use."""
@@ -243,32 +240,31 @@ def run_planned_execution(
         current_short_contracts=item.current_short_contracts,
     )
 
-    # The PDDL layer receives an early Boolean operational signal.
-    # The execution layer below performs the exact rupee-level margin check.
-    margin_available_for_planner = (
-        item.available_margin > 0
-    )
-
-    planning_input = HedgePlanningInput(
+    planning_input = NumericalPlannerInput(
         scenario_name=item.scenario_name,
-        current_hedge_ratio=current_hedge_ratio,
-        core_target_ratio=item.core_target_ratio,
+        portfolio_value=item.portfolio_value,
+        target_hedge_ratio=item.core_target_ratio,
         predicted_volatility=item.predicted_volatility,
         risk_regime=item.risk_regime,
-        margin_available=margin_available_for_planner,
+        futures_price=item.futures_price,
+        lot_size=item.lot_size,
+        current_short_contracts=item.current_short_contracts,
+        margin_per_contract=item.margin_per_contract,
+        available_margin=item.available_margin,
         days_to_expiry=item.days_to_expiry,
         rehedge_allowed=item.rehedge_allowed,
         transaction_cost_bps=item.transaction_cost_bps,
         max_trade_cost_micros=item.max_trade_cost_micros,
     )
 
-    planning_result = solve_planning_input(
+    planning_result = solve_numerical_planning(
         planning_input
     )
 
     execution_target_ratio = approved_execution_target_ratio(
         planning_result=planning_result,
         current_hedge_ratio=current_hedge_ratio,
+        portfolio_value=item.portfolio_value,
     )
 
     execution_input = FuturesExecutionInput(
@@ -291,9 +287,11 @@ def run_planned_execution(
         planning_result.action_sequence
     )
 
-    planner_target_ratio = (
-        planning_result.prepared_state["planner_target_bps"]
-        / 100.0
+    planner_target_ratio = float(
+        planning_result.prepared_state.get(
+            "target_hedge_ratio",
+            item.core_target_ratio,
+        )
     )
 
     integrated_status = determine_status(
