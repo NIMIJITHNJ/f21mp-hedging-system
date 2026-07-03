@@ -1,0 +1,17 @@
+{
+  "purpose": "Proposal-aligned four-strategy financial evaluation",
+  "period": "selection_2020_2024",
+  "cost_bps": 2.0,
+  "strategies": {
+    "1_no_hedge": "Existing no_hedge baseline",
+    "2_static_50": "Existing static 50 percent hedge baseline",
+    "3_ml_rule_based_gjr": "Existing GJR-GARCH volatility regime mapped to rule-based hedge ratios",
+    "4_planning_based_numerical": "Numerical planner applied to gjr_scaled_minvar target hedge ratio with futures contract rounding, margin, cost, expiry and execution constraints"
+  },
+  "portfolio_value": 8000000.0,
+  "available_margin": 2000000.0,
+  "lot_size": 65,
+  "margin_rate": 0.12,
+  "transaction_cost_bps": 2.0,
+  "timing_note": "Uses existing leakage-safe hedge-ratio series. Existing benchmark applies forecast produced at end of day t to day t+1 hedge position."
+}

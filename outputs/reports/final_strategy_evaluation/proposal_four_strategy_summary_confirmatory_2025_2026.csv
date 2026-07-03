@@ -1,0 +1,5 @@
+label,proposal_strategy,period,cost_bps,n_days,total_return_pct,annual_return_pct,volatility_pct,sharpe,sortino,downside_deviation_pct,max_drawdown_pct,cvar_95_pct,var_95_pct,calmar,hedge_ratio_std,average_hedge_ratio,min_hedge_ratio,max_hedge_ratio,average_daily_turnover,total_turnover,total_transaction_cost_pct,gross_total_return_pct,hedging_effectiveness
+no_hedge,1_no_hedge,confirmatory_2025_2026,2.0,309,-10.27,-8.46,13.22,-1.16,-1.687,9.09,-17.61,-1.95,-1.39,-0.502,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-10.27,0.0
+static_50,2_static_50,confirmatory_2025_2026,2.0,309,-7.33,-6.02,7.32,-1.737,-2.58,4.93,-10.74,-1.04,-0.77,-0.579,0.0,0.5,0.5,0.5,0.001618,0.5,0.01,-7.32,0.6937
+ml_rule_based_gjr,3_ml_rule_based_gjr,confirmatory_2025_2026,2.0,309,-7.87,-6.47,6.15,-2.145,-3.387,3.89,-8.81,-0.84,-0.65,-0.759,0.2452,0.5785,0.35,1.0,0.044013,13.6,0.272,-7.62,0.7838
+planning_based_numerical,4_planning_based_numerical,confirmatory_2025_2026,2.0,309,-8.15,-6.7,5.21,-2.581,-3.816,3.52,-10.85,-0.75,-0.57,-0.639,0.1729,0.8334,0.4279,1.3565,0.034889,10.7807,0.2156,-7.95,0.8449
