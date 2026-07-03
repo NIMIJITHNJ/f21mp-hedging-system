@@ -83,6 +83,10 @@ SECTOR_COLOURS = {
 
 
 DISPLAY_LABELS = {
+    "live_strategy_selector": "Live Strategy Selector",
+    "correlation_scaled_min_variance": "Correlation-Scaled Minimum-Variance",
+    "downside_min_variance": "Downside Minimum-Variance",
+
     "OPEN_HEDGE": "Open Hedge",
     "INCREASE_HEDGE": "Increase Hedge",
     "REDUCE_HEDGE": "Reduce Hedge",
@@ -146,11 +150,85 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+
+st.markdown(
+    """
+    <style>
+    /* Hedra final professional layout refinements */
+    .block-container {
+        padding-top: 1.15rem !important;
+        padding-bottom: 1.25rem !important;
+    }
+
+    div[data-testid="stTabs"] {
+        margin-top: 0.25rem !important;
+    }
+
+    div[data-testid="stTabs"] button {
+        padding-top: 0.35rem !important;
+        padding-bottom: 0.35rem !important;
+    }
+
+    .element-container:has(hr) {
+        margin-top: 0.35rem !important;
+        margin-bottom: 0.35rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if "sidebar_open" not in st.session_state:
     st.session_state.sidebar_open = True
 
 
 # â”€â”€ XIRR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def humanize_strategy_mode_label(value):
+    """Convert internal strategy mode names into dashboard-ready labels."""
+    value = str(value or "").strip()
+
+    mapping = {
+        "confirmed_eod_memory": "Confirmed EOD memory",
+        "intraday_provisional": "Intraday provisional",
+        "fallback": "Fallback",
+    }
+
+    return mapping.get(value, value.replace("_", " ").title())
+
+
+def humanize_strategy_source_label(value):
+    """Convert internal strategy source names into dashboard-ready labels."""
+    value = str(value or "").strip()
+
+    mapping = {
+        "live_strategy_selector_eod_memory": "Live strategy selector using confirmed EOD memory",
+        "live_strategy_selector_intraday": "Live strategy selector using intraday quote memory",
+        "fallback_missing_price_history": "Fallback: missing price history",
+        "fallback_insufficient_price_history": "Fallback: insufficient price history",
+        "fallback_insufficient_return_memory": "Fallback: insufficient return memory",
+        "fallback_invalid_futures_variance": "Fallback: invalid futures variance",
+    }
+
+    return mapping.get(value, value.replace("_", " ").title())
+
+
+def format_status_label(value, true_label="Sufficient", false_label="Insufficient"):
+    """Convert booleans into professional dashboard status labels."""
+    if isinstance(value, bool):
+        return true_label if value else false_label
+
+    value_text = str(value).strip()
+
+    if value_text.lower() == "true":
+        return true_label
+
+    if value_text.lower() == "false":
+        return false_label
+
+    return value_text
+
+
 
 def xirr(cashflows, dates):
     """
@@ -1515,9 +1593,9 @@ def render_ml_prediction_content(kite, mode):
         "</div>"
 
         "<div>"
-        "<div class='stat-label'>Core Hedge Target</div>"
+        "<div class='stat-label'>Regime Baseline Target</div>"
         "<div class='stat-value-sm'>" + f"{target_ratio:.2%}" + "</div>"
-        "<div class='stat-meta'>Before execution constraints</div>"
+        "<div class='stat-meta'>Before strategy selection and execution constraints</div>"
         "</div>"
 
         "</div>"
@@ -2294,6 +2372,199 @@ def compute_dynamic_live_hedge_ratio(
 
 
 
+
+def compute_historical_strategy_selector(as_of_date, lookback_days=90, fallback_ratio=0.40):
+    """Replay the live strategy selector using only data available up to a historical date."""
+
+    def safe_ratio(value, upper=1.25):
+        try:
+            value = float(value)
+        except Exception:
+            return 0.0
+
+        if not np.isfinite(value):
+            return 0.0
+
+        return max(0.0, min(value, upper))
+
+    def score_candidate(recent_returns, ratio):
+        ratio = safe_ratio(ratio)
+        hedged = recent_returns["spot_close"] - ratio * recent_returns["futures_close"]
+
+        hedged_vol = float(hedged.std() * np.sqrt(252))
+        downside = hedged[hedged < 0.0]
+        downside_vol = float(downside.std() * np.sqrt(252)) if len(downside) >= 5 else 0.0
+
+        if not np.isfinite(hedged_vol):
+            hedged_vol = 999.0
+
+        if not np.isfinite(downside_vol):
+            downside_vol = 999.0
+
+        return {
+            "hedged_volatility": hedged_vol,
+            "downside_volatility": downside_vol,
+            "score": float(hedged_vol + (0.25 * downside_vol) + (0.002 * abs(ratio))),
+        }
+
+    as_of_ts = pd.to_datetime(as_of_date)
+
+    spot_path = os.path.join("data", "raw", "NIFTY50_spot.csv")
+    futures_path = os.path.join("data", "raw", "NIFTY_futures_continuous.csv")
+
+    spot = _load_close_series_for_live_ratio(spot_path, "spot_close")
+    futures = _load_close_series_for_live_ratio(futures_path, "futures_close")
+
+    fallback_ratio = safe_ratio(fallback_ratio)
+
+    if spot.empty or futures.empty:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_volatility_regime_target",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Historical replay of live strategy selector",
+            "source": "historical_selector_missing_price_history",
+            "mode": "historical_replay",
+            "data_date": as_of_ts.strftime("%Y-%m-%d"),
+            "lookback_days": 0,
+            "strategy_candidates": [],
+            "note": "Spot or futures price history was unavailable, so the fallback target was used.",
+        }
+
+    spot = spot[spot.index <= as_of_ts]
+    futures = futures[futures.index <= as_of_ts]
+
+    merged = pd.concat([spot, futures], axis=1).dropna().sort_index()
+
+    if len(merged) < 40:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_insufficient_history",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Historical replay of live strategy selector",
+            "source": "historical_selector_insufficient_price_history",
+            "mode": "historical_replay",
+            "data_date": merged.index[-1].strftime("%Y-%m-%d") if not merged.empty else as_of_ts.strftime("%Y-%m-%d"),
+            "lookback_days": len(merged),
+            "strategy_candidates": [],
+            "note": "Insufficient paired spot/futures history was available, so the fallback target was used.",
+        }
+
+    returns = np.log(merged).diff().dropna()
+    recent_returns = returns.tail(lookback_days).dropna()
+
+    if len(recent_returns) < 30:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_insufficient_return_memory",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Historical replay of live strategy selector",
+            "source": "historical_selector_insufficient_return_memory",
+            "mode": "historical_replay",
+            "data_date": merged.index[-1].strftime("%Y-%m-%d"),
+            "lookback_days": len(recent_returns),
+            "strategy_candidates": [],
+            "note": "Insufficient recent return memory was available, so the fallback target was used.",
+        }
+
+    futures_variance = float(recent_returns["futures_close"].var())
+
+    if not np.isfinite(futures_variance) or futures_variance <= 0:
+        return {
+            "candidate_ratio": fallback_ratio,
+            "raw_min_variance_ratio": fallback_ratio,
+            "raw_selected_strategy_ratio": fallback_ratio,
+            "selected_strategy": "fallback_invalid_futures_variance",
+            "selected_strategy_label": "Fallback volatility-regime target",
+            "method": "Historical replay of live strategy selector",
+            "source": "historical_selector_invalid_futures_variance",
+            "mode": "historical_replay",
+            "data_date": merged.index[-1].strftime("%Y-%m-%d"),
+            "lookback_days": len(recent_returns),
+            "strategy_candidates": [],
+            "note": "Futures variance was invalid, so the fallback target was used.",
+        }
+
+    covariance = float(recent_returns["spot_close"].cov(recent_returns["futures_close"]))
+    raw_min_variance_ratio = covariance / futures_variance
+
+    if not np.isfinite(raw_min_variance_ratio):
+        raw_min_variance_ratio = fallback_ratio
+
+    corr = float(recent_returns["spot_close"].corr(recent_returns["futures_close"]))
+    if not np.isfinite(corr):
+        corr = 0.0
+
+    downside_returns = recent_returns[recent_returns["spot_close"] < 0.0]
+
+    if len(downside_returns) >= 20 and float(downside_returns["futures_close"].var()) > 0:
+        downside_ratio = float(
+            downside_returns["spot_close"].cov(downside_returns["futures_close"])
+            / downside_returns["futures_close"].var()
+        )
+    else:
+        downside_ratio = raw_min_variance_ratio
+
+    candidate_definitions = [
+        ("no_hedge", "No hedge", 0.0),
+        ("static_50", "Static 50% hedge", 0.50),
+        ("rolling_min_variance", "Rolling minimum-variance hedge", raw_min_variance_ratio),
+        ("downside_min_variance", "Downside minimum-variance hedge", downside_ratio),
+        (
+            "correlation_scaled_min_variance",
+            "Correlation-scaled minimum-variance hedge",
+            raw_min_variance_ratio * abs(corr),
+        ),
+    ]
+
+    candidate_rows = []
+
+    for strategy_key, strategy_label, raw_ratio in candidate_definitions:
+        cleaned_ratio = safe_ratio(raw_ratio)
+        score = score_candidate(recent_returns, cleaned_ratio)
+
+        candidate_rows.append(
+            {
+                "strategy": strategy_key,
+                "strategy_label": strategy_label,
+                "raw_ratio": float(raw_ratio) if np.isfinite(raw_ratio) else 0.0,
+                "candidate_ratio": cleaned_ratio,
+                "hedged_volatility": score["hedged_volatility"],
+                "downside_volatility": score["downside_volatility"],
+                "selection_score": score["score"],
+            }
+        )
+
+    ranked = sorted(candidate_rows, key=lambda row: row["selection_score"])
+    selected = ranked[0]
+
+    return {
+        "candidate_ratio": float(selected["candidate_ratio"]),
+        "raw_min_variance_ratio": float(raw_min_variance_ratio),
+        "raw_selected_strategy_ratio": float(selected["raw_ratio"]),
+        "selected_strategy": selected["strategy"],
+        "selected_strategy_label": selected["strategy_label"],
+        "selected_strategy_score": float(selected["selection_score"]),
+        "method": "Historical replay of live strategy selector",
+        "source": "historical_live_strategy_selector",
+        "mode": "historical_replay",
+        "data_date": merged.index[-1].strftime("%Y-%m-%d"),
+        "lookback_days": len(recent_returns),
+        "strategy_candidates": candidate_rows,
+        "note": (
+            "The live strategy selector was replayed using only spot/futures data available up to "
+            f"{as_of_ts.strftime('%Y-%m-%d')}. The selected candidate was "
+            f"{selected['strategy_label']} based on the lowest recent hedged-risk score."
+        ),
+    }
+
+
 def build_live_hedge_plan(kite):
     snapshot = get_live_broker_snapshot(kite)
 
@@ -2450,13 +2721,13 @@ def render_live_hedge_plan(kite):
 
         "<div>"
         "<div class='stat-label'>Target Hedge Ratio</div>"
-        "<div class='stat-value-sm'>" + f"{result.execution_target_hedge_ratio:.2f}" + "</div>"
+        "<div class='stat-value-sm'>" + f"{result.execution_target_hedge_ratio:.2%}" + "</div>"
         "<div class='stat-meta'>Achieved: " + f"{get_result_field(execution, 'achieved_hedge_ratio', 0.0):.4f}" + "</div>"
         "</div>"
 
         "<div>"
         "<div class='stat-label'>Margin Check</div>"
-        "<div class='stat-value-sm' style='color:" + margin_colour + ";'>" + str(result.margin_sufficient) + "</div>"
+        "<div class='stat-value-sm' style='color:" + margin_colour + ";'>" + format_status_label(result.margin_sufficient) + "</div>"
         "<div class='stat-meta'>Required: " + format_money_html(get_result_field(execution, 'additional_margin_required', 0.0), 0) + "</div>"
         "</div>"
 
@@ -2531,10 +2802,7 @@ def render_live_hedge_plan(kite):
         "<div>"
         "<div class='stat-label'>Strategy Engine</div>"
         "<div class='stat-value-sm'>" + escape(strategy_method) + "</div>"
-        "<div class='stat-meta'>" + escape(strategy_mode
-        .replace("confirmed_eod_memory", "Confirmed EOD memory")
-        .replace("intraday_provisional", "Intraday provisional")
-        .replace("fallback", "Fallback")) + "</div>"
+        "<div class='stat-meta'>" + escape(humanize_strategy_mode_label(strategy_mode)) + "</div>"
         "</div>"
 
         "<div>"
@@ -2552,10 +2820,7 @@ def render_live_hedge_plan(kite):
         "<div>"
         "<div class='stat-label'>Strategy Data Date</div>"
         "<div class='stat-value-sm'>" + escape(strategy_date) + "</div>"
-        "<div class='stat-meta'>" + escape(strategy_source
-        .replace("live_strategy_selector_eod_memory", "Live strategy selector using confirmed EOD memory")
-        .replace("live_strategy_selector_intraday", "Live strategy selector using intraday quote memory")
-        .replace("_", " ")) + "</div>"
+        "<div class='stat-meta'>" + escape(humanize_strategy_source_label(strategy_source)) + "</div>"
         "</div>"
 
         "</div>"
@@ -2799,7 +3064,7 @@ def render_live_explanation(kite):
     factor_rows = [
         ("Hedge ratio engine", strategy_method),
         ("Selected live strategy", selected_strategy_label),
-        ("Strategy mode", strategy_mode.replace("_", " ").title()),
+        ("Strategy mode", humanize_strategy_mode_label(strategy_mode)),
         ("Strategy data date", strategy_date),
         ("Raw selected strategy ratio", raw_selected_strategy_ratio),
         ("Candidate ratio before risk gate", candidate_ratio),
@@ -3086,6 +3351,10 @@ def render_historical_hedge_plan_replay():
 
     strategy_cols = [col for col in ratio_df.columns if col != "date"]
 
+    historical_selector_strategy = "live_strategy_selector"
+    if historical_selector_strategy not in strategy_cols:
+        strategy_cols.append(historical_selector_strategy)
+
     default_strategy = (
         "gjr_scaled_minvar"
         if "gjr_scaled_minvar" in strategy_cols
@@ -3126,19 +3395,47 @@ def render_historical_hedge_plan_replay():
         st.warning("No hedge-ratio row was found for the selected date.")
         return
 
-    raw_target_ratio = float(selected_row.iloc[0][selected_strategy])
-
     previous_rows = ratio_df[ratio_df["date"] < selected_ts].sort_values("date")
-    raw_previous_ratio = (
-        float(previous_rows.iloc[-1][selected_strategy])
-        if not previous_rows.empty
-        else 0.0
-    )
     previous_date_for_gate = (
         previous_rows.iloc[-1]["date"]
         if not previous_rows.empty
         else selected_ts
     )
+
+    historical_selector_signal = None
+    previous_selector_signal = None
+
+    if selected_strategy == "live_strategy_selector":
+        historical_selector_signal = compute_historical_strategy_selector(
+            selected_ts,
+            fallback_ratio=0.40,
+        )
+        raw_target_ratio = float(historical_selector_signal.get("candidate_ratio", 0.0))
+
+        selected_model_label = (
+            "Live Strategy Selector"
+            + " ("
+            + str(historical_selector_signal.get("selected_strategy_label", "N/A"))
+            + ")"
+        )
+
+        if not previous_rows.empty:
+            previous_selector_signal = compute_historical_strategy_selector(
+                previous_date_for_gate,
+                fallback_ratio=0.40,
+            )
+            raw_previous_ratio = float(previous_selector_signal.get("candidate_ratio", 0.0))
+        else:
+            raw_previous_ratio = 0.0
+
+    else:
+        raw_target_ratio = float(selected_row.iloc[0][selected_strategy])
+        raw_previous_ratio = (
+            float(previous_rows.iloc[-1][selected_strategy])
+            if not previous_rows.empty
+            else 0.0
+        )
+        selected_model_label = ui_label(selected_strategy)
 
     predicted_vol, risk_regime = get_historical_prediction(predictions, selected_date)
     previous_predicted_vol, previous_risk_regime = get_historical_prediction(
@@ -3252,7 +3549,7 @@ def render_historical_hedge_plan_replay():
         [
             ["Selected date", selected_date],
             ["Hedge-ratio source", selected_source_name],
-            ["Candidate hedge-ratio model", ui_label(selected_strategy)],
+            ["Candidate hedge-ratio model", selected_model_label],
             ["Risk regime source", "Regression walk-forward volatility prediction"],
             ["Previous raw candidate hedge ratio", f"{raw_previous_ratio:.2%}"],
             ["Previous Hedra target hedge ratio", f"{previous_ratio:.2%}"],
@@ -3260,6 +3557,7 @@ def render_historical_hedge_plan_replay():
             ["Hedra risk-gated target ratio", f"{target_ratio:.2%}"],
             ["Risk gate rule", risk_gate_note],
             ["Previous risk gate rule", previous_gate_note],
+            ["Selector detail", historical_selector_signal.get("note", "Stored hedge-ratio model used.") if historical_selector_signal else "Stored hedge-ratio model used."],
             ["Achieved hedge ratio", f"{achieved_hedge_ratio:.2%}"],
             ["Historical futures price date", futures_price_date],
             ["Historical futures close", f"₹{futures_price:,.2f}"],
@@ -3288,18 +3586,33 @@ def render_historical_hedge_plan_replay():
 
     window_start = selected_ts - pd.Timedelta(days=120)
     window_end = selected_ts + pd.Timedelta(days=30)
-    ratio_window = ratio_df[
+
+    ratio_window_dates = ratio_df[
         (ratio_df["date"] >= window_start)
         & (ratio_df["date"] <= window_end)
-    ][["date", selected_strategy]].copy()
+    ][["date"]].copy()
 
-    if not ratio_window.empty:
+    if not ratio_window_dates.empty:
         chart_rows = []
-        for _, row in ratio_window.iterrows():
+
+        for _, row in ratio_window_dates.iterrows():
             row_date = row["date"]
-            raw_ratio = float(row[selected_strategy])
+
+            if selected_strategy == "live_strategy_selector":
+                row_selector_signal = compute_historical_strategy_selector(
+                    row_date,
+                    fallback_ratio=0.40,
+                )
+                raw_ratio = float(row_selector_signal.get("candidate_ratio", 0.0))
+            else:
+                row_match = ratio_df[ratio_df["date"] == row_date]
+                if row_match.empty:
+                    continue
+                raw_ratio = float(row_match.iloc[0][selected_strategy])
+
             _, row_regime = get_historical_prediction(predictions, row_date)
             hedra_ratio, _ = apply_hedra_risk_gate(raw_ratio, row_regime)
+
             chart_rows.append(
                 {
                     "date": row_date,
@@ -3308,16 +3621,17 @@ def render_historical_hedge_plan_replay():
                 }
             )
 
-        ratio_chart = pd.DataFrame(chart_rows).set_index("date")
+        if chart_rows:
+            ratio_chart = pd.DataFrame(chart_rows).set_index("date")
 
-        st.markdown(
-            "<div class='section-header'>Raw Candidate vs Hedra Risk-Gated Target</div>",
-            unsafe_allow_html=True,
-        )
-        st.line_chart(ratio_chart, width="stretch")
+            st.markdown(
+                "<div class='section-header'>Raw Candidate vs Hedra Risk-Gated Target</div>",
+                unsafe_allow_html=True,
+            )
+            st.line_chart(ratio_chart, width="stretch")
 
     trace_lines = [
-        f"Selected strategy is {ui_label(selected_strategy)} on {selected_date}.",
+        f"Selected strategy is {selected_model_label} on {selected_date}.",
         f"The raw candidate hedge ratio is {raw_target_ratio:.2%}.",
         f"The predicted risk regime is {risk_regime}, so Hedra applies the rule: {risk_gate_note}",
         f"The previous target position was {previous_target_contracts} contract(s), and the current target position is {target_contracts} contract(s).",
@@ -3331,7 +3645,7 @@ def render_historical_hedge_plan_replay():
     st.session_state["historical_replay_context"] = {
         "selected_date": str(selected_date),
         "hedge_ratio_source": selected_source_name,
-        "candidate_model": ui_label(selected_strategy),
+        "candidate_model": selected_model_label,
         "planner_action": ui_label(planner_action),
         "raw_candidate_ratio": f"{raw_target_ratio:.2%}",
         "previous_target_ratio": f"{previous_ratio:.2%}",
@@ -3365,7 +3679,7 @@ def render_historical_hedge_plan_replay():
     st.markdown(
         "<div class='hedge-panel'>"
         "<div class='placeholder-text'>"
-        "The selected hedge-ratio model provides only the candidate hedge size. "
+        "The selected hedge-ratio model or replayed live selector provides only the candidate hedge size. "
         "The risk regime is taken from the volatility prediction layer and is used by Hedra to gate the final hedge target."
         "</div></div>",
         unsafe_allow_html=True,
@@ -3548,7 +3862,7 @@ def render_backtest_evaluation():
 
     st.markdown(
         "<div class='hedge-panel'>"
-        "<div class='placeholder-title'>Benchmark module</div>"
+        "<div class='placeholder-title'>Benchmark evaluation overview</div>"
         "<div class='placeholder-text'>"
         "This section compares saved benchmark hedge strategies such as no hedge, static hedge, rolling minimum-variance, "
         "DCC-GARCH, and smoothed DCC no-trade-band variants. The planning-based historical hedge replay is handled separately "
@@ -3559,7 +3873,7 @@ def render_backtest_evaluation():
 
     catalog = get_backtest_dataset_catalog()
     dataset_name = st.selectbox(
-        "Backtest dataset",
+        "Benchmark dataset",
         list(catalog.keys()),
         key="backtest_dataset_select",
     )
@@ -3577,11 +3891,50 @@ def render_backtest_evaluation():
         )
         return
 
+    summary_df = summary_df.copy()
+    summary_df["label"] = summary_df["label"].astype(str)
+    summary_df["strategy_label"] = summary_df["label"].apply(
+        lambda value: ui_label(str(value))
+    )
+    summary_df["display_label"] = summary_df["strategy_label"]
+
+    def humanize_benchmark_period(value):
+        value = str(value or "").strip()
+
+        mapping = {
+            "selection_2020_2024": "Selection period 2020–2024",
+            "confirmatory_2025_2026": "Confirmatory period 2025–2026",
+        }
+
+        return mapping.get(value, value.replace("_", " ").title())
+
+    duplicate_strategy_labels = summary_df["label"].duplicated(keep=False)
+
+    if duplicate_strategy_labels.any() and "period" in summary_df.columns:
+        period_labels = summary_df["period"].apply(humanize_benchmark_period)
+
+        summary_df.loc[duplicate_strategy_labels, "display_label"] = (
+            summary_df.loc[duplicate_strategy_labels, "strategy_label"]
+            + " — "
+            + period_labels.loc[duplicate_strategy_labels]
+        )
+
+    elif duplicate_strategy_labels.any():
+        variant_numbers = summary_df.groupby("label").cumcount() + 1
+        summary_df.loc[duplicate_strategy_labels, "display_label"] = (
+            summary_df.loc[duplicate_strategy_labels, "strategy_label"]
+            + " — Run "
+            + variant_numbers.loc[duplicate_strategy_labels].astype(str)
+        )
+
     best_vol = safe_metric_value(summary_df, "volatility_pct", "min")
     best_dd = safe_metric_value(summary_df, "max_drawdown_pct", "max")
     best_rank = safe_metric_value(summary_df, "balanced_rank_score", "min")
     no_hedge = summary_df[summary_df["label"].astype(str).str.lower().eq("no_hedge")]
     no_hedge_row = no_hedge.iloc[0] if not no_hedge.empty else None
+    return_leader = safe_metric_value(summary_df, "total_return_pct", "max")
+    best_eff = safe_metric_value(summary_df, "hedging_effectiveness", "max")
+    best_protection = best_rank if best_rank is not None else best_vol
 
     def row_label(row):
         if row is None:
@@ -3596,14 +3949,33 @@ def render_backtest_evaluation():
         except Exception:
             return escape(str(row[column]))
 
+    def row_ratio_percent(row, column):
+        if row is None or column not in row:
+            return "N/A"
+        try:
+            return f"{float(row[column]):.2%}"
+        except Exception:
+            return escape(str(row[column]))
+
+    st.markdown(
+        "<div class='section-header'>Protection Performance Summary</div>",
+        unsafe_allow_html=True,
+    )
+
     st.markdown(
         "<div class='hedge-panel'>"
-        "<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:18px;'>"
+        "<div class='placeholder-title'>Risk-control view</div>"
+        "<div class='placeholder-text'>"
+        "Hedra is evaluated as a portfolio-protection system. The no-hedge baseline may lead total return during strong upward markets, "
+        "but protection quality is judged using volatility, drawdown, downside risk, hedge effectiveness, and transaction cost."
+        "</div>"
+
+        "<div style='display:grid;grid-template-columns:repeat(5,1fr);gap:18px;margin-top:16px;'>"
 
         "<div>"
-        "<div class='stat-label'>Dataset</div>"
-        "<div class='stat-value-sm'>" + escape(dataset_name) + "</div>"
-        "<div class='stat-meta'>" + escape(config["description"]) + "</div>"
+        "<div class='stat-label'>Return Leader</div>"
+        "<div class='stat-value-sm'>" + row_label(return_leader) + "</div>"
+        "<div class='stat-meta'>" + row_value(return_leader, "total_return_pct", "%") + "</div>"
         "</div>"
 
         "<div>"
@@ -3619,15 +3991,31 @@ def render_backtest_evaluation():
         "</div>"
 
         "<div>"
-        "<div class='stat-label'>No-Hedge Return</div>"
-        "<div class='stat-value-sm'>" + row_value(no_hedge_row, "total_return_pct", "%") + "</div>"
-        "<div class='stat-meta'>Reference baseline</div>"
+        "<div class='stat-label'>Best Hedge Effectiveness</div>"
+        "<div class='stat-value-sm'>" + row_label(best_eff) + "</div>"
+        "<div class='stat-meta'>" + row_ratio_percent(best_eff, "hedging_effectiveness") + "</div>"
+        "</div>"
+
+        "<div>"
+        "<div class='stat-label'>Best Risk-Control Rank</div>"
+        "<div class='stat-value-sm'>" + row_label(best_protection) + "</div>"
+        "<div class='stat-meta'>Balanced protection view</div>"
         "</div>"
 
         "</div>"
+
+        "<div style='margin-top:16px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px;'>"
+        "<div class='placeholder-title'>Interpretation</div>"
+        "<div class='placeholder-text'>"
+        "If No Hedge has the highest return, it means the historical market rewarded full upside exposure. "
+        "That does not invalidate Hedra. The hedged strategies should be judged by how much they reduce volatility, drawdown, and tail-loss exposure while preserving acceptable participation."
+        "</div>"
+        "</div>"
+
         "</div>",
         unsafe_allow_html=True,
     )
+
 
     strategies = list(summary_df["label"].astype(str).unique())
     preferred = [
@@ -3651,7 +4039,9 @@ def render_backtest_evaluation():
     )
 
     display_cols = [
+        "display_label",
         "label",
+        "period",
         "total_return_pct",
         "annual_return_pct",
         "volatility_pct",
@@ -3665,6 +4055,13 @@ def render_backtest_evaluation():
     ]
     display_cols = [c for c in display_cols if c in summary_df.columns]
     table_df = summary_df[summary_df["label"].astype(str).isin(selected_strategies)][display_cols].copy()
+    if "display_label" in table_df.columns:
+        table_df["label"] = table_df["display_label"]
+        table_df = table_df.drop(columns=["display_label"], errors="ignore")
+
+
+    if "period" in table_df.columns:
+        table_df["period"] = table_df["period"].apply(humanize_benchmark_period)
 
     if "label" in table_df.columns:
         table_df.insert(0, "Strategy", table_df["label"].apply(ui_label))
