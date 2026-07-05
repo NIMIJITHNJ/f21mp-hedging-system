@@ -439,15 +439,15 @@ AUTH_CARD_BOTTOM = """
   <div class="feature-row">
     <div class="feature-item">
       <div class="feature-icon">&#8599;</div>
-      <div class="feature-text"><strong>LSTM-GARCH prediction</strong><br>Three-class risk classification on Nifty 50 data</div>
+      <div class="feature-text"><strong>GJR-GARCH risk signal</strong><br>Volatility-regime signal for NIFTY 50 hedge planning</div>
     </div>
     <div class="feature-item">
       <div class="feature-icon">&#9638;</div>
-      <div class="feature-text"><strong>PDDL planning</strong><br>Constraint-aware hedge action sequences</div>
+      <div class="feature-text"><strong>Numerical PDDL planning</strong><br>Constraint-aware hedge action and contract sizing</div>
     </div>
     <div class="feature-item">
       <div class="feature-icon">&#9678;</div>
-      <div class="feature-text"><strong>SHAP explainability</strong><br>Feature attribution for every decision</div>
+      <div class="feature-text"><strong>Planner explainability</strong><br>Decision trace and execution rationale for every hedge plan</div>
     </div>
   </div>
 </div></div>
@@ -499,9 +499,9 @@ def render_auth_page(state="login", token=None, error=None):
     elif state == "error":
         safe = escape(str(error))
         body = (
-            "<div class='status-pill error'><span class='dot'></span> Authentication failed</div>"
+            "<div class='status-pill error'><span class='dot'></span> Kite session expired</div>"
             "<div class='error-box'>" + safe + "</div>"
-            "<a href='" + login_url + "' class='btn-primary' style='margin-top:16px;'>Try again</a>"
+            "<a href='" + login_url + "' class='btn-primary' style='margin-top:16px;'>Reconnect with Kite</a>"
         )
     else:
         body = (
@@ -559,8 +559,8 @@ def render_custom_sidebar(profile, token_valid=True):
             "<div class='sidebar-line'></div>"
             "<div class='sidebar-label'>System Modules</div>"
             "<div class='sidebar-page'>Kite market data</div>"
-            "<div class='sidebar-page'>GJR-GARCH ML signal</div>"
-            "<div class='sidebar-page'>Planner backend connected</div>"
+            "<div class='sidebar-page'>GJR-GARCH risk signal</div>"
+            "<div class='sidebar-page'>Numerical planner + ENHSP connected</div>"
             "<div class='sidebar-page'>Futures execution layer</div>"
             "</div>"
         )
@@ -1513,7 +1513,7 @@ def build_volatility_ruler_html(predicted_volatility, low_threshold, high_thresh
 
 def render_ml_prediction_content(kite, mode):
     st.markdown(
-        "<div class='section-header'>ML Prediction</div>",
+        "<div class='section-header'>Risk Signal</div>",
         unsafe_allow_html=True,
     )
 
@@ -2205,7 +2205,7 @@ def compute_dynamic_live_hedge_ratio(
             "raw_selected_strategy_ratio": fallback_ratio,
             "selected_strategy": "fallback_volatility_regime_target",
             "selected_strategy_label": "Fallback volatility-regime target",
-            "method": "Live hedge-ratio strategy selector",
+            "method": "Live Hedge-Ratio Strategy Selector",
             "source": "fallback_missing_price_history",
             "mode": "fallback",
             "data_date": "N/A",
@@ -2237,7 +2237,7 @@ def compute_dynamic_live_hedge_ratio(
             "raw_selected_strategy_ratio": fallback_ratio,
             "selected_strategy": "fallback_insufficient_history",
             "selected_strategy_label": "Fallback volatility-regime target",
-            "method": "Live hedge-ratio strategy selector",
+            "method": "Live Hedge-Ratio Strategy Selector",
             "source": "fallback_insufficient_price_history",
             "mode": "fallback",
             "data_date": merged.index[-1].strftime("%Y-%m-%d") if not merged.empty else "N/A",
@@ -2256,7 +2256,7 @@ def compute_dynamic_live_hedge_ratio(
             "raw_selected_strategy_ratio": fallback_ratio,
             "selected_strategy": "fallback_insufficient_return_memory",
             "selected_strategy_label": "Fallback volatility-regime target",
-            "method": "Live hedge-ratio strategy selector",
+            "method": "Live Hedge-Ratio Strategy Selector",
             "source": "fallback_insufficient_return_memory",
             "mode": "fallback",
             "data_date": merged.index[-1].strftime("%Y-%m-%d"),
@@ -2274,7 +2274,7 @@ def compute_dynamic_live_hedge_ratio(
             "raw_selected_strategy_ratio": fallback_ratio,
             "selected_strategy": "fallback_invalid_futures_variance",
             "selected_strategy_label": "Fallback volatility-regime target",
-            "method": "Live hedge-ratio strategy selector",
+            "method": "Live Hedge-Ratio Strategy Selector",
             "source": "fallback_invalid_futures_variance",
             "mode": "fallback",
             "data_date": merged.index[-1].strftime("%Y-%m-%d"),
@@ -2310,7 +2310,7 @@ def compute_dynamic_live_hedge_ratio(
         ("downside_min_variance", "Downside minimum-variance hedge", downside_ratio),
         (
             "correlation_scaled_min_variance",
-            "Correlation-scaled minimum-variance hedge",
+            "Correlation-Scaled Minimum-Variance Hedge",
             raw_min_variance_ratio * abs(corr),
         ),
     ]
@@ -2360,7 +2360,7 @@ def compute_dynamic_live_hedge_ratio(
         "selected_strategy": selected["strategy"],
         "selected_strategy_label": selected["strategy_label"],
         "selected_strategy_score": float(selected["selection_score"]),
-        "method": "Live hedge-ratio strategy selector",
+        "method": "Live Hedge-Ratio Strategy Selector",
         "source": source,
         "mode": mode,
         "data_date": merged.index[-1].strftime("%Y-%m-%d"),
@@ -2518,7 +2518,7 @@ def compute_historical_strategy_selector(as_of_date, lookback_days=90, fallback_
         ("downside_min_variance", "Downside minimum-variance hedge", downside_ratio),
         (
             "correlation_scaled_min_variance",
-            "Correlation-scaled minimum-variance hedge",
+            "Correlation-Scaled Minimum-Variance Hedge",
             raw_min_variance_ratio * abs(corr),
         ),
     ]
@@ -2611,7 +2611,7 @@ def build_live_hedge_plan(kite):
         margin_per_contract=margin_per_contract,
         available_margin=simulated_margin_reserve,
         days_to_expiry=snapshot.days_to_expiry,
-        max_trade_cost_micros=250,
+        max_trade_cost_micros=5000,
     )
 
     result = run_planned_execution(item)
@@ -2702,6 +2702,7 @@ def render_live_hedge_plan(kite):
 
     margin_colour = "#4ade80" if result.margin_sufficient else "#f87171"
     action_colour = "#4ade80" if result.status == "EXECUTABLE_PLAN" else "#fbbf24"
+    contract_delta_text = f"{int(result.contract_delta):+d}"
 
     st.markdown(
         "<div class='hedge-panel'>"
@@ -2716,13 +2717,13 @@ def render_live_hedge_plan(kite):
         "<div>"
         "<div class='stat-label'>Recommended Contracts</div>"
         "<div class='stat-value-sm'>" + str(result.recommended_short_contracts) + " short NIFTY FUT</div>"
-        "<div class='stat-meta'>Current: " + str(result.current_short_contracts) + " &middot; Change: +" + str(result.contract_delta) + "</div>"
+        "<div class='stat-meta'>Current: " + str(result.current_short_contracts) + " &middot; Change: " + escape(contract_delta_text) + "</div>"
         "</div>"
 
         "<div>"
-        "<div class='stat-label'>Target Hedge Ratio</div>"
+        "<div class='stat-label'>Executable Hedge Ratio</div>"
         "<div class='stat-value-sm'>" + f"{result.execution_target_hedge_ratio:.2%}" + "</div>"
-        "<div class='stat-meta'>Achieved: " + f"{get_result_field(execution, 'achieved_hedge_ratio', 0.0):.4f}" + "</div>"
+        "<div class='stat-meta'>Risk-gated target: " + f"{float(inputs.get('core_target_ratio', 0.0)):.2%}" + "</div>"
         "</div>"
 
         "<div>"
@@ -2772,7 +2773,7 @@ def render_live_hedge_plan(kite):
     plan_html = "".join("<li>" + escape(ui_text(line)) + "</li>" for line in plan_lines)
     exec_html = "".join("<li>" + escape(ui_text(line)) + "</li>" for line in exec_lines)
 
-    strategy_method = str(inputs.get("live_hedge_ratio_method", "Live hedge-ratio strategy selector"))
+    strategy_method = str(inputs.get("live_hedge_ratio_method", "Live Hedge-Ratio Strategy Selector"))
     selected_strategy_label = str(inputs.get("selected_live_strategy_label", "N/A"))
     strategy_mode = str(inputs.get("live_hedge_ratio_mode", "confirmed_eod_memory"))
     strategy_date = str(inputs.get("live_hedge_ratio_data_date", "N/A"))
@@ -2812,9 +2813,9 @@ def render_live_hedge_plan(kite):
         "</div>"
 
         "<div>"
-        "<div class='stat-label'>Final Hedra Target</div>"
+        "<div class='stat-label'>Executable Hedra Ratio</div>"
         "<div class='stat-value-sm'>" + f"{result.execution_target_hedge_ratio:.2%}" + "</div>"
-        "<div class='stat-meta'>After volatility risk gate</div>"
+        "<div class='stat-meta'>After risk gate and contract rounding</div>"
         "</div>"
 
         "<div>"
@@ -3045,7 +3046,7 @@ def render_live_explanation(kite):
         for title, body in narrative_sections
     )
 
-    strategy_method = str(inputs.get("live_hedge_ratio_method", "Live hedge-ratio strategy selector"))
+    strategy_method = str(inputs.get("live_hedge_ratio_method", "Live Hedge-Ratio Strategy Selector"))
     selected_strategy_label = str(inputs.get("selected_live_strategy_label", "N/A"))
     strategy_mode = str(inputs.get("live_hedge_ratio_mode", "confirmed_eod_memory"))
     strategy_date = str(inputs.get("live_hedge_ratio_data_date", "N/A"))
@@ -4170,7 +4171,7 @@ def render_dashboard_home(kite, profile):
             "Overview",
             "Portfolio",
             "Market Data",
-            "ML Prediction",
+            "Risk Signal",
             "Hedge Plan",
             "Explanation",
         ])
