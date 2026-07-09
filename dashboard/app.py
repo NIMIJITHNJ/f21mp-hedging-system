@@ -106,6 +106,8 @@ DISPLAY_LABELS = {
     "rolling_min_variance": "Rolling Minimum-Variance",
     "gjr_scaled_minvar": "GJR-Scaled Minimum-Variance",
     "gjr_regime_dynamic": "GJR Regime Dynamic",
+    "ml_rule_based_gjr": "ML / Rule-Based GJR Hedge",
+    "planning_based_numerical": "Planning-Based Numerical Hedra",
     "dcc_raw": "DCC Raw",
     "dcc_ema20_band0p10": "DCC EMA(20) + 10% No-Trade Band",
     "dcc_ema20_band0p05": "DCC EMA(20) + 5% No-Trade Band",
@@ -3145,32 +3147,55 @@ def render_live_explanation(kite):
 
 def get_backtest_dataset_catalog():
     return {
-        "Rolling hedge performance": {
+        "Final four-strategy evaluation - Confirmatory 2025-2026": {
+            "summary": "outputs/reports/final_strategy_evaluation/proposal_four_strategy_summary_confirmatory_2025_2026.csv",
+            "daily": "outputs/reports/final_strategy_evaluation/proposal_four_strategy_daily_details_confirmatory_2025_2026.csv",
+            "ratio": "",
+            "description": "Final out-of-sample evaluation comparing no hedge, static 50% hedge, ML / rule-based GJR hedge, and planning-based numerical Hedra during 2025?2026.",
+        },
+        "Final four-strategy evaluation - Selection 2020-2024": {
+            "summary": "outputs/reports/final_strategy_evaluation/proposal_four_strategy_summary_selection_2020_2024.csv",
+            "daily": "outputs/reports/final_strategy_evaluation/proposal_four_strategy_daily_details_selection_2020_2024.csv",
+            "ratio": "",
+            "description": "Selection-period evaluation comparing no hedge, static 50% hedge, ML / rule-based GJR hedge, and planning-based numerical Hedra during 2020?2024.",
+        },
+        "Final four-strategy evaluation - All periods": {
+            "summary": "outputs/reports/final_strategy_evaluation/proposal_four_strategy_summary_all_periods.csv",
+            "daily": "",
+            "ratio": "",
+            "description": "Combined summary table for both final evaluation periods. Use the separate selection and confirmatory views for period-specific charts.",
+        },
+        "Extended benchmark - Rolling and GJR-scaled hedge ratios": {
             "summary": "outputs/reports/hedge_performance/hedge_performance_summary.csv",
             "daily": "outputs/reports/hedge_performance/hedge_performance_daily_details.csv",
             "ratio": "outputs/reports/hedge_performance/hedge_ratio_series.csv",
-            "description": "Baseline hedge strategies including no hedge, static hedge, rolling minimum-variance, and GJR-scaled hedge ratios.",
+            "description": "Extended benchmark strategies including no hedge, static hedge, rolling minimum-variance, and GJR-scaled hedge ratios.",
         },
-        "DCC-GJR-GARCH benchmark": {
+        "Extended benchmark - DCC-GJR-GARCH": {
             "summary": "outputs/reports/dcc_garch/dcc_garch_performance_summary.csv",
             "daily": "outputs/reports/dcc_garch/dcc_garch_daily_details.csv",
             "ratio": "outputs/reports/dcc_garch/dcc_garch_ratio_series.csv",
-            "description": "Dynamic conditional correlation benchmark using DCC-GJR-GARCH hedge ratios.",
+            "description": "Extended dynamic conditional correlation benchmark using DCC-GJR-GARCH hedge ratios.",
         },
-        "DCC smoothing and no-trade-band benchmark": {
+        "Extended benchmark - DCC smoothing and no-trade-band": {
             "summary": "outputs/reports/dcc_smoothing/dcc_smoothing_performance_summary.csv",
             "daily": "outputs/reports/dcc_smoothing/dcc_smoothing_daily_details.csv",
             "ratio": "outputs/reports/dcc_smoothing/dcc_smoothing_ratio_series.csv",
-            "description": "Smoothed DCC hedge ratios with EMA and no-trade-band variants for turnover control.",
+            "description": "Extended smoothed DCC hedge ratios with EMA and no-trade-band variants for turnover control.",
         },
     }
 
 
 @st.cache_data(show_spinner=False)
 def load_backtest_csv(path_text):
-    path = Path(path_text)
-    if not path.exists():
+    if path_text is None or not str(path_text).strip():
         return pd.DataFrame()
+
+    path = Path(str(path_text).strip())
+
+    if not path.exists() or path.is_dir():
+        return pd.DataFrame()
+
     return pd.read_csv(path)
 
 
@@ -4019,14 +4044,22 @@ def render_backtest_evaluation():
 
 
     strategies = list(summary_df["label"].astype(str).unique())
-    preferred = [
-        "no_hedge",
-        "static_50",
-        "rolling_min_variance",
-        "gjr_scaled_minvar",
-        "dcc_raw",
-        "dcc_ema20_band0p10",
-    ]
+    if "Final four-strategy evaluation" in dataset_name:
+        preferred = [
+            "no_hedge",
+            "static_50",
+            "ml_rule_based_gjr",
+            "planning_based_numerical",
+        ]
+    else:
+        preferred = [
+            "no_hedge",
+            "static_50",
+            "rolling_min_variance",
+            "gjr_scaled_minvar",
+            "dcc_raw",
+            "dcc_ema20_band0p10",
+        ]
     default_strategies = [s for s in preferred if s in strategies]
     if not default_strategies:
         default_strategies = strategies[: min(5, len(strategies))]
@@ -4089,27 +4122,91 @@ def render_backtest_evaluation():
     st.dataframe(table_df, width="stretch", hide_index=True)
 
     if not daily_df.empty and {"date", "strategy", "hedged_return_net"}.issubset(daily_df.columns):
-        chart_df = daily_df[daily_df["strategy"].astype(str).isin(selected_strategies)].copy()
-        chart_df["date"] = pd.to_datetime(chart_df["date"], errors="coerce")
-        chart_df = chart_df.dropna(subset=["date"])
+        chart_df = daily_df.copy()
+        chart_df["strategy_key"] = chart_df["strategy"].astype(str).str.strip()
+        chart_df["date"] = pd.to_datetime(chart_df["date"], format="mixed", errors="coerce")
+        chart_df["hedged_return_net"] = pd.to_numeric(chart_df["hedged_return_net"], errors="coerce")
+        chart_df = chart_df.dropna(subset=["date", "hedged_return_net"])
 
-        pivot = chart_df.pivot_table(
-            index="date",
-            columns="strategy",
-            values="hedged_return_net",
-            aggfunc="first",
-        ).sort_index()
+        final_strategy_labels = {
+            "no_hedge": "No Hedge",
+            "static_50": "Static 50% Hedge",
+            "gjr_regime_dynamic": "ML / Rule-Based GJR Hedge",
+            "planning_based_numerical": "Planning-Based Numerical Hedra",
+        }
 
-        cumulative = ((1 + pivot.fillna(0)).cumprod() - 1) * 100
-        cumulative_display = cumulative.rename(
-            columns={col: ui_label(col) for col in cumulative.columns}
+        if dataset_name.startswith("Final four-strategy evaluation"):
+            chart_keys = list(final_strategy_labels.keys())
+            chart_df = chart_df[chart_df["strategy_key"].isin(chart_keys)].copy()
+            chart_df["Strategy"] = chart_df["strategy_key"].map(final_strategy_labels)
+            chart_order = [final_strategy_labels[key] for key in chart_keys]
+        else:
+            selected_raw = set(str(item).strip() for item in selected_strategies)
+            selected_labels = set(ui_label(item) for item in selected_strategies)
+            chart_df = chart_df[
+                chart_df["strategy_key"].isin(selected_raw)
+                | chart_df["strategy_key"].map(ui_label).isin(selected_labels)
+            ].copy()
+            chart_df["Strategy"] = chart_df["strategy_key"].map(ui_label)
+            chart_order = chart_df["Strategy"].dropna().unique().tolist()
+
+        chart_df = chart_df.dropna(subset=["Strategy"])
+        chart_df = chart_df.sort_values(["Strategy", "date"])
+
+        chart_df["Cumulative Net Return (%)"] = (
+            chart_df.groupby("Strategy")["hedged_return_net"]
+            .transform(lambda x: ((1 + x).cumprod() - 1) * 100)
         )
+
+        chart_title = "Cumulative Net Return"
+        if dataset_name.endswith("Confirmatory 2025-2026"):
+            chart_title = "Cumulative Net Return - Confirmatory 2025-2026"
+        elif dataset_name.endswith("Selection 2020-2024"):
+            chart_title = "Cumulative Net Return - Selection 2020-2024"
 
         st.markdown(
-            "<div class='section-header'>Cumulative Net Return</div>",
+            f"<div class='section-header'>{chart_title}</div>",
             unsafe_allow_html=True,
         )
-        st.line_chart(cumulative_display, width="stretch")
+
+        wide_chart = (
+            chart_df.pivot_table(
+                index="date",
+                columns="Strategy",
+                values="Cumulative Net Return (%)",
+                aggfunc="first",
+            )
+            .sort_index()
+        )
+
+        wide_chart = wide_chart.reindex(columns=[c for c in chart_order if c in wide_chart.columns])
+
+        if wide_chart.empty:
+            st.info("No daily return series matched the selected strategies.")
+        else:
+            fig, ax = plt.subplots(figsize=(12, 4.2), facecolor="#111217")
+            ax.set_facecolor("#111217")
+
+            for column in wide_chart.columns:
+                ax.plot(wide_chart.index, wide_chart[column], label=column, linewidth=1.8)
+
+            ax.set_xlabel("Date", color="#E5E7EB")
+            ax.set_ylabel("Cumulative Net Return (%)", color="#E5E7EB")
+            ax.tick_params(axis="x", colors="#D1D5DB")
+            ax.tick_params(axis="y", colors="#D1D5DB")
+
+            for spine in ax.spines.values():
+                spine.set_color("#374151")
+
+            ax.grid(True, alpha=0.25, color="#6B7280")
+
+            legend = ax.legend(loc="best", facecolor="#111217", edgecolor="#374151")
+            for text in legend.get_texts():
+                text.set_color("#E5E7EB")
+
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
 
     if not ratio_df.empty and "date" in ratio_df.columns:
         ratio_plot = ratio_df.copy()
