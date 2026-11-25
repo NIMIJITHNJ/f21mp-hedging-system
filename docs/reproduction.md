@@ -21,7 +21,7 @@ The dashboard initiates Kite authentication and can write a refreshed token to `
 | Daily NIFTY spot, continuous futures and ten equity OHLCV CSVs | `data/raw/`, including `NIFTY50_spot.csv` and `NIFTY_futures_continuous.csv` | Use an authorised snapshot for exact reconstruction. `python src/data/fetch_data.py` implements acquisition using a dissertation-era futures token. Resolve a valid dated contract instrument token through Kite before attempting a fresh continuous-series fetch. Run `python src/data/verify_data.py` to review dates and data quality. |
 | External macro series | `data/external/` | `python -m src.features.fetch_macro` downloads daily gold `GC=F`, Brent `BZ=F` and USD/INR `INR=X` through yfinance, joins the yield series and aligns the result to the NIFTY spot calendar. Keep the original `raw_india_10y.csv` if available. The script can use a constant 6.5% if the yield input is absent and can backfill earlier dates from the earliest supplied yield. These choices affect reproduction and limit historical interpretation. |
 | Fixed chronological features and labels | `data/processed/` | `python -m src.features.build_features` uses the raw and macro inputs to generate train, validation and test splits, feature names and risk thresholds. The fixed-split defaults differ from walk-forward folds. |
-| LSTM and classical classification | `outputs/archive/exploratory_runs/`, `outputs/archive/lstm_walkforward_final_*/`, `outputs/reports/` and `outputs/figures/` | Use `python -m src.models.train_classical_models` for the classical comparison, `python -m src.models.run_model_experiments` for the older fixed-split grid and `python -m src.models.run_walkforward_lstm_with_holdout` for the walk-forward grid and one confirmatory run. GPU, TensorFlow and training settings can affect retraining. |
+| LSTM and classical classification | `outputs/archive/exploratory_runs/`, `outputs/archive/lstm_walkforward_final_*/`, `outputs/reports/` and `outputs/figures/` | Use the historical recipe below for the archived Random Forest and XGBoost comparison, `python -m src.models.run_model_experiments` for the separate fixed-split grid and `python -m src.models.run_walkforward_lstm_with_holdout` for the walk-forward grid and one confirmatory run. GPU, TensorFlow and training settings can affect retraining. |
 | Volatility-regression selection, fold results and forecasts | `outputs/reports/regression_walkforward/` and `outputs/archive/regression_walkforward_run*/` | Run `python -m src.models.regression.run_volatility_regression_walkforward` with the raw and macro snapshots. Replay uses `regression_walkforward_predictions.csv`. The archive includes the selected configuration and fold and confirmatory summaries. |
 | Four-strategy results and intermediate hedge-ratio series | `outputs/reports/hedge_performance/` and `outputs/reports/final_strategy_evaluation/` | Run the two-step financial evaluation below. The submission includes the four-strategy outputs but omits the upstream daily-details CSV required to run the downstream script directly. |
 | Extended DCC and smoothing comparisons | `outputs/reports/dcc_garch/`, `outputs/reports/dcc_smoothing/` and their archives | Run `python -m src.evaluation.run_dcc_garch_backtest` followed by `python -m src.evaluation.run_dcc_smoothing_backtest`. Smoothing uses DCC outputs and provides `dcc_smoothing_ratio_series.csv` for replay. |
@@ -44,6 +44,21 @@ The upstream script writes `hedge_performance_daily_details.csv` and `hedge_rati
 
 Historical replay combines the core and optional DCC-smoothed ratio series, local futures closes, the historical lot-size schedule and regression predictions. The interface can substitute defaults when certain files or predictions are missing. Verify your inputs before interpreting a replay.
 
+## Reproduce the May 2026 classical classifier comparison
+
+The archived Random Forest and XGBoost reports were reproduced in a disposable copy with the following input and source versions.
+
+1. Copy the twelve preserved raw CSVs for NIFTY 50 spot, NIFTY continuous futures and the ten stocks. Keep the existing header and dates from 1 January 2018 through 28 March 2025 inclusive in each copy.
+2. Recover `data/external/macro_combined.csv`, `src/features/build_features.py` and `src/features/technical_indicators.py` from commit `438c5f97dbaa7b8a7df4f992f29a7b8dea83f4a4`. Use the historic macro file as-is. Recover `src/models/train_classical_models.py` from commit `7e24923`, where the trainer first entered Git. For example, `git show 438c5f9:data/external/macro_combined.csv` displays the historical macro snapshot.
+3. Run the commands below from the disposable copy using the pinned Python 3.12 research environment. The verified run used scikit-learn 1.8.0, XGBoost 3.2.0, arch 8.0.0, SciPy 1.17.1, pandas 3.0.3, NumPy 2.4.6 and joblib 1.5.3.
+
+```text
+python -m src.features.build_features
+python -m src.models.train_classical_models
+```
+
+The five-day feature generator should produce 976 training, 246 validation and 306 test rows with 25 features. Compare the two model binaries against the preserved local model archives and the comparison, classification and feature-importance files against their archived reports. The verification reproduced both model binaries byte for byte and all five reports after normalising line endings. The original six May processed files were not retained in the evidence reviewed. The submitted processed split is a later configuration and should be preserved separately.
+
 ## Planner demonstrations and validation
 
 ```text
@@ -55,6 +70,19 @@ python -m src.planning.run_planned_futures_execution --demo
 ```
 
 ENHSP requires a Java runtime on `PATH`. To use independent VAL validation, install or build VAL from its upstream project and set `VAL_VALIDATE` to the trusted validator executable path. The app also searches `tools/val/` for a local executable. Run VAL with the domain, problem and action file as arguments. The checked-in [common-scenario results](../outputs/reports/planning/three_planner_common_scenario_comparison_val.csv) record the original action sequences. Write one lowercase action in parentheses per line, with each arrow-separated action on its own line. [VAL upstream project](https://github.com/KCL-Planning/VAL)
+
+For the verified Linux build, use a writable scratch directory in Ubuntu 24.04 on WSL 2 with Git, CMake, a C++ compiler and Make already available. These commands build a native Linux executable under the normal Ubuntu user. Run it inside Ubuntu.
+
+```bash
+git init val-source
+git -C val-source fetch --depth=1 https://github.com/KCL-Planning/VAL.git 3c7a1f330bdab0ba28a4762bb45c3f06c27fb6d4
+git -C val-source checkout --detach FETCH_HEAD
+cmake -S val-source -B val-build -DCMAKE_BUILD_TYPE=Release
+cmake --build val-build --target Validate --parallel 4
+val-build/bin/Validate path/to/domain.pddl path/to/problem.pddl path/to/plan.val
+```
+
+For the full 36-case audit, use the original `plan.val`, `domain.pddl` and `problem.pddl` files from the submission ZIP or original backup. Resolve the paths in the archived CSV relative to the project root, converting Windows separators to Linux separators inside WSL. Compare the explicit `Plan valid` output, exit code and final objective value with the corresponding archived VAL reports. Only selected fixtures are checked into this repository. [Microsoft WSL command reference](https://learn.microsoft.com/en-us/windows/wsl/basic-commands)
 
 [Planning evidence](evidence/planning/) includes submission copies of the opening, insufficient-margin and roll-then-hold PDDL cases for each planner variant, plus the numerical and autonomous symbolic edge-case summaries. The full archived comparison includes 12 common cases per variant. Output paths in archived tables refer to the original generated hierarchy. Find the selected copies under `docs/evidence/planning/` using the same variant and scenario suffix.
 
