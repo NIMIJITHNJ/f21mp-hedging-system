@@ -1,34 +1,6 @@
 """
 Leakage-safe walk-forward benchmark for NIFTY 50 volatility regression.
 
-Models compared:
-1. GARCH(1,1)
-2. EGARCH(1,1) with Student-t errors
-3. GJR-GARCH(1,1) with Student-t errors
-4. HAR-inspired Ridge regression
-5. XGBoost regression
-6. LightGBM regression
-7. GARCH-XGBoost hybrid
-8. EGARCH-XGBoost hybrid
-9. GJR-GARCH-XGBoost hybrid
-
-Target:
-    Annualised future realised-volatility proxy over the next h trading days:
-    sqrt(mean(r[t+1:t+h]^2) * 252)
-
-Key design choices:
-- Statistical forecasts are proper horizon-matched forecasts.
-- GARCH uses analytical multi-step forecasts.
-- EGARCH and GJR-GARCH use deterministic simulation forecasts for h > 1.
-- Statistical model parameters are refitted annually using data available only
-  up to the end of the previous year.
-- Conditional volatility recursion is updated using observed returns as time
-  moves forward. No future returns enter any feature or forecast.
-- ML hyperparameters are selected using validation data only.
-- 2025 to Mar-2026 is an additional confirmatory period, not a tuning period.
-
-Run:
-    python src/models/regression/run_volatility_regression_walkforward.py
 """
 
 from __future__ import annotations
@@ -416,11 +388,6 @@ def average_horizon_forecast(
     """
     Produce horizon-matched annualised volatility forecasts.
 
-    For date t, the result is:
-        sqrt(mean(forecast_variance[t+1:t+h]) * 252)
-
-    Returns are supplied in percent units to arch, so the final forecast is
-    divided by 100 after annualisation.
     """
     spec = statistical_spec(model_name)
 
@@ -472,9 +439,6 @@ def build_oos_statistical_forecasts(
     """
     Build leakage-safe statistical forecasts with annual expanding refits.
 
-    Forecasts for year Y use parameters estimated only through 31 Dec Y-1.
-    Inside year Y, the recursion updates using observed returns available by
-    each forecast origin date.
     """
     print(f"  Building OOS statistical forecasts for horizon={horizon}d ...")
 

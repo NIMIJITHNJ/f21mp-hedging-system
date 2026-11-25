@@ -1,0 +1,17 @@
+(define (problem autonomous_symbolic_hedge_plan_common_roll_then_hold-problem)
+ (:domain autonomous_symbolic_hedge_plan_common_roll_then_hold-domain)
+ (:init
+              (position_open)
+              (hedge_needed)
+              (margin_available)
+              (rehedge_allowed)
+              (cost_allowed)
+              (roll_required)
+              (hold_allowed)
+ )
+ (:goal (and 
+           (decision_completed)
+           (or (not (position_open)) (not (roll_required)) (roll_completed))
+        )
+ )
+)

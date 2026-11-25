@@ -123,11 +123,9 @@ def get_live_volatility_signal(
     live_timestamp=None,
     use_live_price: bool = False,
 ) -> LiveVolatilitySignal:
-    """Create a dashboard-facing GJR-GARCH volatility signal.
+    """
+     Create a dashboard-facing GJR-GARCH volatility signal.
 
-    If a fresh Kite quote is supplied, the quote is appended as a provisional
-    latest observation. If no fresh quote is supplied, the function falls back
-    to the latest confirmed local historical close.
     """
 
     if not spot_path.exists():

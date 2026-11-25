@@ -84,10 +84,9 @@ class AutonomousSymbolicPlannerResult:
 
 
 def risk_gated_target_ratio(candidate_ratio: float, risk_regime: str) -> float:
-    """Apply the same hedge cap used in the dashboard.
+    """
+    Apply the same hedge cap used in the dashboard.
 
-    The strategy selector gives a candidate hedge ratio. The risk regime then
-    decides how much of that candidate the system is allowed to use.
     """
     candidate_ratio = max(0.0, float(candidate_ratio))
     regime = str(risk_regime).strip().lower()

@@ -1,0 +1,41 @@
+(define (domain autonomous_symbolic_hedge_plan_common_roll_then_hold-domain)
+ (:requirements :strips :negative-preconditions :disjunctive-preconditions)
+ (:predicates 
+             (position_open)
+             (hedge_needed)
+             (target_zero)
+             (target_above_current)
+             (target_below_current)
+             (margin_available)
+             (rehedge_allowed)
+             (cost_allowed)
+             (roll_required)
+             (roll_completed)
+             (hold_allowed)
+             (decision_completed)
+ )
+ (:action open_hedge
+  :parameters ()
+  :precondition (and (not (position_open)) (hedge_needed) (margin_available) (rehedge_allowed) (cost_allowed))
+  :effect (and (position_open) (decision_completed)))
+ (:action increase_hedge
+  :parameters ()
+  :precondition (and (position_open) (or (not (roll_required)) (roll_completed)) (target_above_current) (margin_available) (rehedge_allowed) (cost_allowed))
+  :effect (and (decision_completed)))
+ (:action reduce_hedge
+  :parameters ()
+  :precondition (and (position_open) (or (not (roll_required)) (roll_completed)) (target_below_current) (not (target_zero)) (rehedge_allowed) (cost_allowed))
+  :effect (and (decision_completed)))
+ (:action close_hedge
+  :parameters ()
+  :precondition (and (position_open) (or (not (roll_required)) (roll_completed)) (target_zero) (rehedge_allowed) (cost_allowed))
+  :effect (and (not (position_open)) (decision_completed)))
+ (:action hold_position
+  :parameters ()
+  :precondition (and (hold_allowed))
+  :effect (and (decision_completed)))
+ (:action roll_futures_forward
+  :parameters ()
+  :precondition (and (position_open) (roll_required) (not (roll_completed)))
+  :effect (and (roll_completed)))
+)

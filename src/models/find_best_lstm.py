@@ -1,11 +1,6 @@
-"""Find the best reproducible LSTM configuration without touching the final test set.
+"""
+Find the best reproducible LSTM configuration without touching the final test set.
 
-Usage from repository root:
-    python src/models/find_best_lstm.py --mode quick
-    python src/models/find_best_lstm.py --mode full
-
-Quick mode is designed for an initial run. Full mode performs a more extensive
-walk-forward comparison before the final model is locked.
 """
 
 from __future__ import annotations

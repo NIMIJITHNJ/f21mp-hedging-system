@@ -1,23 +1,3 @@
-"""
-Three baseline hedging strategies applied to the 10-stock equal-weight
-portfolio, hedged using Nifty 50 futures.
-
-The Nifty 50 spot index appears only as a benchmark comparison — it is
-NOT the instrument being hedged.
-
-Baseline 1 — No hedge        (hedge_ratio = 0.00)
-Baseline 2 — Static 50%      (hedge_ratio = 0.50)
-Baseline 3 — VECM static     (hedge_ratio = 0.8824, from Vasantha &
-                               Mallikarjunappa 2015, applied here to
-                               the stock portfolio rather than the index)
-
-Each baseline is evaluated on the full period, training period, and test
-period so Week 9 can do a fair multi-strategy comparison.
-
-Run from the project root:
-    python src/evaluation/baselines.py
-"""
-
 import sys
 from pathlib import Path
 
@@ -30,19 +10,16 @@ import pandas as pd
 from src.evaluation.portfolio import build_return_series, compute_portfolio_value
 from src.evaluation.metrics   import summarise, print_summary
 
-# ── Hedge ratio constants ─────────────────────────────────────────────────────
-
+# Hedge ratio constants
 RATIO_NO_HEDGE    = 0.00
 RATIO_STATIC_50   = 0.50
 
-# Vasantha & Mallikarjunappa (2015) VECM-derived optimal hedge ratio.
-# Originally estimated for the Nifty index; applied here as a static
 # baseline for the stock portfolio hedge.
 RATIO_VECM        = 0.8824
 
 RISK_FREE_RATE    = 0.065   # India 91-day T-bill rate (annualised)
 
-# ── Baseline evaluation ───────────────────────────────────────────────────────
+# Baseline evaluation
 
 def evaluate_baseline(
     hedge_ratio: float,
@@ -140,7 +117,7 @@ def print_baseline_comparison(results: list) -> None:
     print("\n" + "=" * 70)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# Entry point
 
 if __name__ == "__main__":
     print("\nRunning baselines on FULL period (Jan 2021 – Mar 2025) ...")

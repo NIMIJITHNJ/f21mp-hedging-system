@@ -1,0 +1,45 @@
+(define (domain numerical_hedge_plan_common_roll_then_hold-domain)
+ (:requirements :strips :negative-preconditions :disjunctive-preconditions :equality :numeric-fluents)
+ (:predicates 
+             (position_open)
+             (rehedge_allowed)
+             (roll_required)
+             (roll_completed)
+             (hold_allowed)
+             (decision_completed)
+ )
+ (:functions 
+             (current_contracts)
+             (target_contracts)
+             (executable_contracts)
+             (margin_available_amount)
+             (margin_required_amount)
+             (transaction_cost_micros)
+             (max_transaction_cost_micros)
+             (days_to_expiry)
+ )
+ (:action open_hedge
+  :parameters ()
+  :precondition (and (not (position_open)) (< 0 (target_contracts)) (<= (margin_required_amount) (margin_available_amount)) (rehedge_allowed) (<= (transaction_cost_micros) (max_transaction_cost_micros)))
+  :effect (and (position_open) (assign (current_contracts) (target_contracts)) (assign (executable_contracts) (target_contracts)) (decision_completed)))
+ (:action increase_hedge
+  :parameters ()
+  :precondition (and (position_open) (or (not (roll_required)) (roll_completed)) (< (current_contracts) (target_contracts)) (<= (margin_required_amount) (margin_available_amount)) (rehedge_allowed) (<= (transaction_cost_micros) (max_transaction_cost_micros)))
+  :effect (and (assign (current_contracts) (target_contracts)) (assign (executable_contracts) (target_contracts)) (decision_completed)))
+ (:action reduce_hedge
+  :parameters ()
+  :precondition (and (position_open) (or (not (roll_required)) (roll_completed)) (< (target_contracts) (current_contracts)) (< 0 (target_contracts)) (rehedge_allowed) (<= (transaction_cost_micros) (max_transaction_cost_micros)))
+  :effect (and (assign (current_contracts) (target_contracts)) (assign (executable_contracts) (target_contracts)) (decision_completed)))
+ (:action close_hedge
+  :parameters ()
+  :precondition (and (position_open) (or (not (roll_required)) (roll_completed)) (= (target_contracts) 0) (rehedge_allowed) (<= (transaction_cost_micros) (max_transaction_cost_micros)))
+  :effect (and (not (position_open)) (assign (current_contracts) 0) (assign (executable_contracts) 0) (decision_completed)))
+ (:action hold_position
+  :parameters ()
+  :precondition (and (hold_allowed))
+  :effect (and (decision_completed)))
+ (:action roll_futures_forward
+  :parameters ()
+  :precondition (and (position_open) (roll_required) (not (roll_completed)))
+  :effect (and (roll_completed)))
+)

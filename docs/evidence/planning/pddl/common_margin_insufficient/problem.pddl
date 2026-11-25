@@ -1,0 +1,18 @@
+(define (problem hedge_plan_common_margin_insufficient-problem)
+ (:domain hedge_plan_common_margin_insufficient-domain)
+ (:init
+              (position_open)
+              (rehedge_allowed)
+              (hold_allowed)
+              (= (current_hedge_bps) 20)
+              (= (target_hedge_bps) 80)
+              (= (max_hedge_bps) 150)
+              (= (estimated_trade_cost_micros) 120)
+              (= (max_trade_cost_micros) 5000)
+ )
+ (:goal (and 
+           (decision_completed)
+           (or (not (position_open)) (not (roll_required)) (roll_completed))
+        )
+ )
+)

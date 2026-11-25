@@ -1,17 +1,3 @@
-﻿"""
-app.py
-
-Entry point for Hedra â€” the dynamic risk hedging dashboard.
-
-Flow:
-    No token present  â†’ authentication page
-    Token present     â†’ dashboard home (system status + portfolio + sector chart)
-    Kite callback     â†’ exchange request_token, save to .env, show dashboard home
-
-Run from the project root:
-    streamlit run dashboard/app.py
-"""
-
 import os
 import subprocess
 import sys
@@ -184,7 +170,6 @@ if "sidebar_open" not in st.session_state:
     st.session_state.sidebar_open = True
 
 
-# â”€â”€ XIRR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def humanize_strategy_mode_label(value):
     """Convert internal strategy mode names into dashboard-ready labels."""
@@ -253,8 +238,6 @@ def xirr(cashflows, dates):
     except Exception:
         return None
 
-
-# â”€â”€ CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def get_css(auth_page=False):
     sidebar_width = "280px" if st.session_state.sidebar_open else "72px"
@@ -425,8 +408,6 @@ div[data-testid="stButton"] button {{
 """
 
 
-# â”€â”€ Auth HTML â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 AUTH_CARD_TOP = """
 <div class="page-wrap"><div class="auth-card">
   <div class="logo-row">
@@ -456,8 +437,6 @@ AUTH_CARD_BOTTOM = """
 """
 
 
-# â”€â”€ Kite helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 def exchange_and_save_token(request_token):
     kite         = KiteConnect(api_key=API_KEY)
     session      = kite.generate_session(request_token, api_secret=API_SECRET)
@@ -482,8 +461,6 @@ def verify_token(kite):
     except Exception as e:
         return False, str(e)
 
-
-# â”€â”€ Auth page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_auth_page(state="login", token=None, error=None):
     st.markdown(get_css(auth_page=True), unsafe_allow_html=True)
@@ -515,8 +492,6 @@ def render_auth_page(state="login", token=None, error=None):
 
     st.markdown(AUTH_CARD_TOP + body + AUTH_CARD_BOTTOM, unsafe_allow_html=True)
 
-
-# â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_custom_sidebar(profile, token_valid=True):
     name  = escape(profile.get("user_name", "â€”")) if profile else "â€”"
@@ -581,8 +556,6 @@ def render_custom_sidebar(profile, token_valid=True):
 
     st.markdown(sidebar_html, unsafe_allow_html=True)
 
-
-# â”€â”€ Sector pie chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_sector_pie(sector_totals):
     sectors = list(sector_totals.keys())
@@ -653,8 +626,7 @@ def render_sector_pie(sector_totals):
     )
 
 
-# â”€â”€ Dashboard home â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
+# Dashboard home
 
 def render_placeholder_section(title, text):
     st.markdown(
@@ -1126,7 +1098,6 @@ def render_eod_data_update_panel(kite):
         status_colour = "#4ade80"
 
     # Default to the latest completed market-data date, not the next calendar/trading day.
-    # This is safer for EOD updates because the current day may not yet have a confirmed close.
     default_date = datetime.now(IST).date()
 
     quote_timestamp_raw = str(market_status.get("quote_timestamp") or "").strip()
@@ -1879,9 +1850,7 @@ def render_live_dashboard_content(kite, profile, now, tok_prev, user_name, user_
     )
 
 
-# â”€â”€ Main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-
+# Main
 
 def render_live_portfolio_content(kite):
     st.markdown(
@@ -1947,7 +1916,7 @@ def render_live_portfolio_content(kite):
         )
         return
 
-    # â”€â”€ Compute portfolio totals before rendering columns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Compute portfolio totals before rendering columns
     total_cost = sum(s["cost"] for s in quote_data if s["cost"])
     total_curr = sum(s["curr"] for s in quote_data if s["curr"])
     total_pnl  = total_curr - total_cost
@@ -1964,7 +1933,7 @@ def render_live_portfolio_content(kite):
 
     col_portfolio, col_chart = st.columns([3, 2])
 
-    # â”€â”€ Left: portfolio table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Left: portfolio table
     with col_portfolio:
         def portfolio_row(item):
             pct      = item["pct"]
@@ -2015,7 +1984,7 @@ def render_live_portfolio_content(kite):
             unsafe_allow_html=True,
         )
 
-    # â”€â”€ Right: summary at top, pie chart below â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Right: summary at top, pie chart below
     with col_chart:
         # Portfolio summary card
         st.markdown(
@@ -2067,10 +2036,7 @@ def render_live_portfolio_content(kite):
         # Sector pie chart below summary
         render_sector_pie(sector_totals)
 
-    # â”€â”€ Last hedge decision â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-
-
+    # Last hedge decision
 
 def format_money_html(value, decimals=0):
     try:
@@ -2150,7 +2116,6 @@ def compute_dynamic_live_hedge_ratio(
     fallback_ratio=0.40,
 ):
     """Select a live hedge-ratio strategy using recent spot/futures return memory.
-
     The module compares multiple candidate hedge strategies on recent paired
     NIFTY spot and futures returns. The selected candidate ratio is then passed
     to the Hedra volatility risk gate in build_live_hedge_plan().
@@ -4348,7 +4313,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-

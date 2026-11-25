@@ -1,25 +1,3 @@
-"""
-
-Experiments:
-    1. Horizon sweep: 3-day, 5-day, 10-day forward volatility labels
-       (using current best LSTM config on each horizon)
-    2. Hyperparameter sweep: 6 LSTM configs on best horizon
-    3. Classical baselines: Random Forest and XGBoost on best horizon
-
-Evaluation criteria (in priority order):
-    1. Macro-F1
-    2. High-risk recall
-    3. Overall accuracy
-
-All results saved to:
-    outputs/reports/experiment_results.csv
-    outputs/reports/experiment_summary.txt
-    outputs/figures/experiment_confusion_matrices/
-
-Fixed test period: 2024-01-01 to 2026-03-20 (chronological, no leakage)
-
-"""
-
 import os
 import sys
 import pickle
@@ -61,7 +39,7 @@ from features.technical_indicators import (
     log_return, rolling_volatility,
 )
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# Paths
 PROCESSED_DIR = "data/processed"
 REPORTS_DIR   = "outputs/reports"
 FIGURES_DIR   = "outputs/figures/experiment_confusion_matrices"
@@ -72,11 +50,11 @@ EXTERNAL_DIR  = "data/external"
 for d in [REPORTS_DIR, FIGURES_DIR, MODELS_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# ── Fixed split boundaries ────────────────────────────────────────────────────
+# Fixed split boundaries
 TRAIN_END = "2022-12-31"
 VAL_END   = "2023-12-31"
 
-# ── Experiment configurations ─────────────────────────────────────────────────
+# Experiment configurations
 HORIZONS = [3, 5, 10]
 
 LSTM_CONFIGS = {
@@ -95,7 +73,7 @@ MAX_EPOCHS = 100
 ES_PATIENCE = 15
 
 
-# ── Feature matrix builder ────────────────────────────────────────────────────
+# Feature matrix builder
 
 def build_feature_matrix(horizon):
     """
@@ -189,7 +167,7 @@ def build_feature_matrix(horizon):
     return X_tr_s, X_v_s, X_te_s, y_tr, y_v, y_te
 
 
-# ── Sequence builder ──────────────────────────────────────────────────────────
+# Sequence builder
 
 def build_sequences(X, y, seq_len):
     Xs, ys = [], []
@@ -209,7 +187,7 @@ def build_sequences_with_context(X_context, X_split, y_split, seq_len):
     return np.array(Xs, dtype=np.float32), np.array(ys, dtype=np.int32)
 
 
-# ── LSTM builder ──────────────────────────────────────────────────────────────
+# LSTM builder
 
 def build_lstm(lstm_units, dense_units, dropout, lr):
     model = Sequential([
@@ -229,7 +207,7 @@ def build_lstm(lstm_units, dense_units, dropout, lr):
     return model
 
 
-# ── Metrics extractor ─────────────────────────────────────────────────────────
+# Metrics extractor
 
 def get_metrics(y_true, y_pred, split="test"):
     acc      = accuracy_score(y_true, y_pred)
@@ -252,7 +230,7 @@ def get_metrics(y_true, y_pred, split="test"):
     }
 
 
-# ── Confusion matrix plotter ──────────────────────────────────────────────────
+# Confusion matrix plotter
 
 def save_confusion_matrix(y_true, y_pred, title, path):
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
@@ -274,7 +252,7 @@ def save_confusion_matrix(y_true, y_pred, title, path):
     plt.close()
 
 
-# ── Run one LSTM experiment ───────────────────────────────────────────────────
+# Run one LSTM experiment
 
 def run_lstm_experiment(config_name, config, horizon,
                         X_tr, X_v, X_te, y_tr, y_v, y_te):
@@ -345,7 +323,7 @@ def run_lstm_experiment(config_name, config, horizon,
     }
 
 
-# ── Run RF/XGBoost experiment ─────────────────────────────────────────────────
+# Run RF/XGBoost experiment
 
 def run_classical_experiment(model_name, horizon,
                              X_tr, X_v, X_te, y_tr, y_v, y_te):
@@ -396,7 +374,7 @@ def run_classical_experiment(model_name, horizon,
     }
 
 
-# ── Main experiment loop ──────────────────────────────────────────────────────
+# Main experiment loop
 
 if __name__ == "__main__":
     results = []
@@ -409,7 +387,7 @@ if __name__ == "__main__":
     print(f"Total experiments: {total}")
     print("=" * 65)
 
-    # ── Phase 1: LSTM horizon + config sweep ──────────────────────────────────
+    # Phase 1: LSTM horizon + config sweep
     for horizon in HORIZONS:
         print(f"\n{'─'*65}")
         print(f"HORIZON {horizon}-day  —  building feature matrix ...")
@@ -432,7 +410,7 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"    ERROR: {e}")
 
-    # ── Phase 2: Classical models on each horizon ─────────────────────────────
+    # Phase 2: Classical models on each horizon
     for horizon in HORIZONS:
         print(f"\n{'─'*65}")
         print(f"Classical models — horizon {horizon}-day ...")
@@ -454,13 +432,13 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"    ERROR: {e}")
 
-    # ── Save results ──────────────────────────────────────────────────────────
+    # Save results
     results_df = pd.DataFrame(results)
     csv_path   = os.path.join(REPORTS_DIR, "experiment_results.csv")
     results_df.to_csv(csv_path, index=False)
     print(f"\n\nSaved results: {csv_path}")
 
-    # ── Print summary table ───────────────────────────────────────────────────
+    # Print summary table
     print("\n" + "=" * 65)
     print("RESULTS SUMMARY (sorted by test_macro_f1 desc)")
     print("=" * 65)
@@ -474,7 +452,7 @@ if __name__ == "__main__":
     ).head(15)
     print(summary.to_string(index=False))
 
-    # ── Best model ────────────────────────────────────────────────────────────
+    # Best model
     best = results_df.sort_values(
         ["test_macro_f1", "test_high_recall"], ascending=False
     ).iloc[0]
@@ -488,7 +466,7 @@ if __name__ == "__main__":
     print(f"  Val  macro-F1 : {best['val_macro_f1']:.4f}")
     print("=" * 65)
 
-    # ── Save summary text ─────────────────────────────────────────────────────
+    # Save summary text
     summary_path = os.path.join(REPORTS_DIR, "experiment_summary.txt")
     with open(summary_path, "w") as f:
         f.write("HEDRA EXPERIMENT SUMMARY\n")

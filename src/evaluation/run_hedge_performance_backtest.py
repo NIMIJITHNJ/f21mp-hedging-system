@@ -1,26 +1,6 @@
 ﻿"""
 Leakage-safe hedge-performance benchmark for the system.
 
-Purpose
--------
-Evaluate whether the selected 1-day GJR-GARCH volatility forecast improves
-real hedging outcomes for the equal-weight 10-stock portfolio after turnover
-and transaction costs.
-
-Strategies
-----------
-1. no_hedge
-2. static_50
-3. literature_vecm_static
-4. rolling_min_variance
-5. gjr_regime_dynamic
-6. gjr_scaled_minvar
-
-Important timing rule
----------------------
-A volatility forecast produced at the end of day t is applied to the futures
-position for day t+1 only. This avoids look-ahead bias.
-
 """
 
 from __future__ import annotations
@@ -128,8 +108,6 @@ def rolling_minimum_variance_ratio(
     Estimate the classic minimum-variance hedge ratio:
         h_t = Cov(R_portfolio, R_futures) / Var(R_futures)
 
-    The estimate is shifted by one trading day, so return on day t uses only
-    data observed through day t-1.
     """
     covariance = portfolio_returns.rolling(window).cov(futures_returns)
     variance = futures_returns.rolling(window).var()
@@ -144,8 +122,6 @@ def build_gjr_forecast_signal() -> pd.Series:
     Rebuild the selected 1-day GJR-GARCH forecast series using the same
     leakage-safe annual expanding-refit method as the regression benchmark.
 
-    The series returned here is shifted by one trading day:
-        forecast generated at t -> hedge applied at t+1
     """
     base_features, spot_close = build_base_features()
     horizon_frame = build_horizon_frame(
@@ -166,13 +142,6 @@ def gjr_regime_dynamic_ratio(
     """
     Convert lagged GJR-GARCH forecasts into a transparent three-level hedge.
 
-    Expanding q33 and q67 thresholds are shifted by one day. Therefore, the
-    risk threshold used on date t is based only on earlier forecasts.
-
-    Hedge levels:
-        Low risk    -> 0.35
-        Medium risk -> 0.70
-        High risk   -> 1.00
     """
     q33 = (
         lagged_forecast
@@ -209,10 +178,6 @@ def gjr_scaled_minvar_ratio(
     """
     Scale the rolling minimum-variance ratio using the lagged GJR forecast.
 
-    The volatility scaling factor compares the forecast with its expanding
-    historical median, calculated from earlier forecasts only.
-
-    Scaling is capped to avoid excessive leverage and unstable turnover.
     """
     historical_median = (
         lagged_forecast
@@ -271,8 +236,6 @@ def apply_strategy(
     """
     Apply a dynamic hedge ratio with transaction costs.
 
-    turnover[t] = abs(h[t] - h[t-1])
-    cost[t]     = turnover[t] * cost_bps / 10,000
     """
     frame = returns.join(hedge_ratio.rename("hedge_ratio"), how="inner")
     frame = frame.dropna(subset=["hedge_ratio"]).copy()
@@ -593,6 +556,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-

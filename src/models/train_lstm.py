@@ -6,12 +6,12 @@ import random
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")   # non-interactive backend — no display needed
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import seaborn as sns
  
-# ── Reproducibility ───────────────────────────────────────────────────────────
+# Reproducibility
 SEED = 42
 os.environ["PYTHONHASHSEED"] = str(SEED)
 random.seed(SEED)
@@ -30,7 +30,7 @@ from tensorflow.keras.utils import to_categorical
  
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
  
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# Paths
 PROCESSED_DIR = "data/processed"
 MODELS_DIR    = "outputs/models"
 REPORTS_DIR   = "outputs/reports"
@@ -39,7 +39,7 @@ FIGURES_DIR   = "outputs/figures"
 for d in [MODELS_DIR, REPORTS_DIR, FIGURES_DIR]:
     os.makedirs(d, exist_ok=True)
  
-# ── Hyperparameters ───────────────────────────────────────────────────────────
+# Hyperparameters
 SEQ_LEN    = 20       # look-back window in trading days
 N_FEATURES = 25
 N_CLASSES  = 3
@@ -54,7 +54,7 @@ LR_PATIENCE= 7
 LR_FACTOR  = 0.5
  
  
-# ── Data loading ──────────────────────────────────────────────────────────────
+# Data loading
  
 def load_split(split):
     """Load X and y for a given split ('train', 'val', 'test')."""
@@ -71,19 +71,12 @@ def load_split(split):
     return X, y
  
  
-# ── Sequence builder ──────────────────────────────────────────────────────────
+# Sequence builder
  
 def build_sequences(X, y, seq_len):
     """
     Build overlapping sequences for the training split.
- 
-    For each position i >= seq_len, the input window is X[i-seq_len : i]
-    and the label is y[i-1] (label for the last day of the window).
- 
-    Returns
-    -------
-    Xs : np.ndarray  shape (n_samples, seq_len, n_features)
-    ys : np.ndarray  shape (n_samples,)
+
     """
     Xs, ys = [], []
     for i in range(seq_len, len(X) + 1):
@@ -95,22 +88,7 @@ def build_sequences(X, y, seq_len):
 def build_sequences_with_context(X_context, X_split, y_split, seq_len):
     """
     Build sequences for val/test using prior-split rows as context window.
- 
-    The first sequence uses (seq_len-1) context rows + row 0 of X_split.
-    Each subsequent sequence slides forward within X_split only.
-    Labels come entirely from y_split — no label leakage from prior split.
- 
-    Parameters
-    ----------
-    X_context : np.ndarray  shape (seq_len-1, n_features) — last rows of prior split
-    X_split   : np.ndarray  shape (n, n_features) — current split features
-    y_split   : np.ndarray  shape (n,) — current split labels
-    seq_len   : int — look-back window length
- 
-    Returns
-    -------
-    Xs : np.ndarray  shape (n, seq_len, n_features)
-    ys : np.ndarray  shape (n,)
+
     """
     assert len(X_context) == seq_len - 1, (
         f"X_context must have {seq_len - 1} rows, got {len(X_context)}"
@@ -124,17 +102,13 @@ def build_sequences_with_context(X_context, X_split, y_split, seq_len):
     return np.array(Xs, dtype=np.float32), np.array(ys, dtype=np.int32)
  
  
-# ── Model definition ──────────────────────────────────────────────────────────
+# Model definition
  
 def build_model(seq_len, n_features, n_classes,
                 lstm_units, dropout, dense_units, lr):
     """
     Two-layer stacked LSTM with a dense head.
- 
-    Layer 1 — LSTM(64, return_sequences=True)  + Dropout(0.2)
-    Layer 2 — LSTM(64, return_sequences=False) + Dropout(0.2)
-    Layer 3 — Dense(32, relu)
-    Layer 4 — Dense(3, softmax)
+
     """
     model = Sequential([
         Input(shape=(seq_len, n_features)),
@@ -154,7 +128,7 @@ def build_model(seq_len, n_features, n_classes,
     return model
  
  
-# ── Plotting helpers ──────────────────────────────────────────────────────────
+# Plotting helpers
  
 def plot_confusion_matrix(y_true, y_pred, path):
     cm     = confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
@@ -227,11 +201,11 @@ def plot_training_curves(history, path):
     print(f"  Saved: {path}")
  
  
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main
  
 if __name__ == "__main__":
  
-    # ── Load data ─────────────────────────────────────────────────────────────
+    # Load data
     print("Loading processed data ...")
     X_train_raw, y_train_raw = load_split("train")
     X_val_raw,   y_val_raw   = load_split("val")
@@ -240,13 +214,9 @@ if __name__ == "__main__":
     print(f"  Raw shapes — train: {X_train_raw.shape}  "
           f"val: {X_val_raw.shape}  test: {X_test_raw.shape}")
  
-    # ── Build sequences ───────────────────────────────────────────────────────
+    # Build sequences
     print(f"\nBuilding {SEQ_LEN}-day sequences ...")
- 
-    # Training: sequences built entirely within the training split.
-    # Val/test: the first seq_len-1 FEATURE rows come from the prior split
-    # as context — this gives a full window for every day in the split.
-    # Labels come exclusively from the target split — no leakage.
+
     X_train, y_train = build_sequences(X_train_raw, y_train_raw, SEQ_LEN)
     X_val,   y_val   = build_sequences_with_context(
         X_context = X_train_raw[-(SEQ_LEN - 1):],
@@ -264,12 +234,12 @@ if __name__ == "__main__":
     print(f"  Sequence shapes — train: {X_train.shape}  "
           f"val: {X_val.shape}  test: {X_test.shape}")
  
-    # ── One-hot encode labels ─────────────────────────────────────────────────
+    # One-hot encode labels
     y_train_cat = to_categorical(y_train, N_CLASSES)
     y_val_cat   = to_categorical(y_val,   N_CLASSES)
     y_test_cat  = to_categorical(y_test,  N_CLASSES)
  
-    # ── Build model ───────────────────────────────────────────────────────────
+    # Build model
     print("\nBuilding LSTM model ...")
     model = build_model(
         seq_len=SEQ_LEN, n_features=N_FEATURES, n_classes=N_CLASSES,
@@ -278,7 +248,7 @@ if __name__ == "__main__":
     )
     model.summary()
  
-    # ── Callbacks ─────────────────────────────────────────────────────────────
+    # Callbacks
     callbacks = [
         EarlyStopping(
             monitor="val_loss", patience=ES_PATIENCE,
@@ -290,7 +260,7 @@ if __name__ == "__main__":
         ),
     ]
  
-    # ── Train ─────────────────────────────────────────────────────────────────
+    # Train
     print(f"\nTraining (max {MAX_EPOCHS} epochs, early stopping patience={ES_PATIENCE}) ...")
     # Class weights — prevents model collapsing to predicting only Medium.
     from sklearn.utils.class_weight import compute_class_weight
@@ -312,7 +282,7 @@ if __name__ == "__main__":
         verbose=1,
     )
  
-    # ── Evaluate ──────────────────────────────────────────────────────────────
+    # Evaluate
     print("\nEvaluating ...")
     y_val_pred  = np.argmax(model.predict(X_val,  verbose=0), axis=1)
     y_test_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
@@ -341,19 +311,19 @@ if __name__ == "__main__":
     )
     print(test_report)
  
-    # ── Save model ────────────────────────────────────────────────────────────
+    # Save model
     model_path = os.path.join(MODELS_DIR, "lstm_model.keras")
     model.save(model_path)
     print(f"\n  Saved model : {model_path}")
  
-    # ── Save training history ─────────────────────────────────────────────────
+    # Save training history
     history_df = pd.DataFrame(hist.history)
     history_df.index.name = "epoch"
     history_path = os.path.join(REPORTS_DIR, "training_history.csv")
     history_df.to_csv(history_path)
     print(f"  Saved history : {history_path}")
  
-    # ── Save classification report ────────────────────────────────────────────
+    # Save classification report
     report_path = os.path.join(REPORTS_DIR, "classification_report.txt")
     with open(report_path, "w") as f:
         f.write("=" * 60 + "\n")
@@ -371,7 +341,7 @@ if __name__ == "__main__":
         f.write(test_report + "\n")
     print(f"  Saved report  : {report_path}")
  
-    # ── Save figures ──────────────────────────────────────────────────────────
+    # Save figures
     print("\nSaving figures ...")
     plot_confusion_matrix(
         y_val, y_val_pred,

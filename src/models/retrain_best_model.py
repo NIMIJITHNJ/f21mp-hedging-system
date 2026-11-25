@@ -1,13 +1,3 @@
-"""
-retrain_best_model.py
-
-Retrains LSTM_C4_h10 (the locked best model) with deterministic ops
-and saves the model, classification report, and figures.
-
-Run from project root:
-    python src/models/retrain_best_model.py
-"""
-
 import os
 import sys
 import random
@@ -52,7 +42,7 @@ from features.technical_indicators import (
     log_return, rolling_volatility,
 )
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# Paths
 EXTERNAL_DIR = "data/external"
 MODELS_DIR   = "outputs/models"
 REPORTS_DIR  = "outputs/reports"
@@ -61,7 +51,7 @@ FIGURES_DIR  = "outputs/figures"
 for d in [MODELS_DIR, REPORTS_DIR, FIGURES_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# ── Locked config: LSTM_C4_h10 ────────────────────────────────────────────────
+# Locked config: LSTM_C4_h10
 HORIZON     = 10
 LSTM_UNITS  = 64
 DENSE_UNITS = 32
@@ -189,7 +179,7 @@ if __name__ == "__main__":
     print(f"  TF_DETERMINISTIC_OPS=1")
     print("=" * 60)
 
-    # ── Build data ────────────────────────────────────────────────────────────
+    # Build data
     print("\nBuilding feature matrix ...")
     X_tr, X_v, X_te, y_tr, y_v, y_te = build_feature_matrix()
 
@@ -209,7 +199,7 @@ if __name__ == "__main__":
     class_weight = {0: cw[0], 1: cw[1], 2: cw[2]}
     print(f"  Class weights: {class_weight}")
 
-    # ── Build model ───────────────────────────────────────────────────────────
+    # Build model
     print("\nBuilding model ...")
     model = Sequential([
         Input(shape=(SEQ_LEN, N_FEATURES)),
@@ -227,7 +217,7 @@ if __name__ == "__main__":
     )
     model.summary()
 
-    # ── Train ─────────────────────────────────────────────────────────────────
+    # Train
     print(f"\nTraining (max {MAX_EPOCHS} epochs, patience={ES_PATIENCE}) ...")
     callbacks = [
         EarlyStopping(monitor="val_loss", patience=ES_PATIENCE,
@@ -245,7 +235,7 @@ if __name__ == "__main__":
         verbose=1,
     )
 
-    # ── Evaluate ──────────────────────────────────────────────────────────────
+    # Evaluate
     print("\nEvaluating ...")
     y_val_pred  = np.argmax(model.predict(X_val_seq,  verbose=0), axis=1)
     y_test_pred = np.argmax(model.predict(X_test_seq, verbose=0), axis=1)
@@ -269,12 +259,12 @@ if __name__ == "__main__":
     print("\n  Validation:\n", val_report)
     print("  Test:\n", test_report)
 
-    # ── Save model ────────────────────────────────────────────────────────────
+    # Save model
     model_path = os.path.join(MODELS_DIR, "lstm_model.keras")
     model.save(model_path)
     print(f"  Saved model: {model_path}")
 
-    # ── Save report ───────────────────────────────────────────────────────────
+    # Save report
     report_path = os.path.join(REPORTS_DIR, "classification_report.txt")
     with open(report_path, "w") as f:
         f.write("LSTM_C4_h10 — LOCKED FINAL MODEL\n")
@@ -292,11 +282,11 @@ if __name__ == "__main__":
         f.write(test_report + "\n")
     print(f"  Saved report: {report_path}")
 
-    # ── Save training history ─────────────────────────────────────────────────
+    # Save training history
     history_df = pd.DataFrame(hist.history)
     history_df.to_csv(os.path.join(REPORTS_DIR, "training_history.csv"), index=False)
 
-    # ── Confusion matrix ──────────────────────────────────────────────────────
+    # Confusion matrix
     cm = confusion_matrix(y_test_seq, y_test_pred, labels=[0,1,2])
     fig, ax = plt.subplots(figsize=(6, 5))
     fig.patch.set_facecolor("#0d0d0f")

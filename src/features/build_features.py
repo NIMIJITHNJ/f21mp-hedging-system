@@ -83,9 +83,6 @@ def make_risk_labels(spot_close, feature_index, train_end, horizon=5):
     """
     Generate three-class forward-looking risk labels.
 
-    The label on day t = volatility regime over the NEXT horizon trading days.
-    Thresholds are tertiles fitted on training data only.
-    Last horizon rows receive NaN (no future window available).
     """
     spot_ret    = np.log(spot_close / spot_close.shift(1))
     rolling_vol = spot_ret.rolling(horizon).std() * np.sqrt(TRADING_DAYS)
@@ -116,7 +113,7 @@ def make_risk_labels(spot_close, feature_index, train_end, horizon=5):
 if __name__ == "__main__":
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-    # ── Load data ─────────────────────────────────────────────────────────────
+    # Load data
     print("Loading raw data ...")
     spot = load_raw("NIFTY50_spot")
     fut  = load_raw("NIFTY_futures_continuous")
@@ -132,7 +129,7 @@ if __name__ == "__main__":
         df = load_raw(sym)
         stock_returns[sym] = log_return(df["close"]).rename(f"ret_{sym}")
 
-    # ── Technical indicators ──────────────────────────────────────────────────
+    # Technical indicators
     print("\nComputing technical indicators ...")
 
     rsi14                  = rsi(spot["close"], period=14)
@@ -142,19 +139,19 @@ if __name__ == "__main__":
     atr14                  = atr(spot["high"], spot["low"], spot["close"], period=14)
     sma_cross              = sma_crossover(spot["close"], fast=10, slow=20)
 
-    # ── OI features ───────────────────────────────────────────────────────────
+    # OI features
     # OI is only available from 2019 onwards with continuous=True token.
     # For 2012-2018, OI is zero — pct_change and ratio produce NaN/inf.
-    # Fill with 0 to retain those rows rather than dropping them.
+
     oi_pct   = oi_pct_change(fut["oi"], period=1).fillna(0)
     oi_ratio = oi_volume_ratio(fut["oi"], fut["volume"]).fillna(0)
     oi_ma20  = oi_moving_average(fut["oi"], window=20).fillna(0)
 
-    # ── Volatility ────────────────────────────────────────────────────────────
+    #  Volatility
     realised_vol = rolling_volatility(spot["close"], window=20)
     spot_log_ret = log_return(spot["close"])
 
-    # ── GARCH(1,1) ────────────────────────────────────────────────────────────
+    # GARCH(1,1)
     print("\nFitting GARCH(1,1) ...")
     train_mask = spot_log_ret.index <= TRAIN_END
     garch_sigma, garch_result = fit_garch(
@@ -162,7 +159,7 @@ if __name__ == "__main__":
         spot_log_ret,
     )
 
-    # ── Assemble feature matrix ───────────────────────────────────────────────
+    # Assemble feature matrix
     print("\nAssembling feature matrix ...")
 
     feature_df = pd.DataFrame(index=spot.index)
@@ -188,13 +185,12 @@ if __name__ == "__main__":
 
     print(f"  Feature matrix shape before dropna: {feature_df.shape}")
 
-    # Replace inf/-inf before dropna (oi_vol_ratio can produce inf from
-    # zero-volume days; oi_pct_change can produce inf from 0->nonzero transitions)
+
     feature_df = feature_df.replace([np.inf, -np.inf], np.nan)
     feature_df = feature_df.dropna()
     print(f"  Feature matrix shape after dropna : {feature_df.shape}")
 
-    # ── Forward-looking risk labels ───────────────────────────────────────────
+    # Forward-looking risk labels
     print("\nGenerating forward-looking risk labels ...")
     labels, q33, q67 = make_risk_labels(
         spot_close    = spot["close"],
@@ -209,7 +205,7 @@ if __name__ == "__main__":
     print(f"  Rows after dropping NaN-label tail : {len(feature_df)}")
     print(f"  Label distribution:\n{feature_df['risk_label'].value_counts().sort_index()}")
 
-    # ── Train / val / test split ──────────────────────────────────────────────
+    # Train / val / test split
     print("\nSplitting into train / val / test ...")
     train_df = feature_df[feature_df.index <= TRAIN_END]
     val_df   = feature_df[(feature_df.index > TRAIN_END) & (feature_df.index <= VAL_END)]
@@ -228,13 +224,13 @@ if __name__ == "__main__":
     y_val   = val_df["risk_label"]
     y_test  = test_df["risk_label"]
 
-    # ── Clean infinities before scaling ──────────────────────────────────────
+    # Clean infinities before scaling
     # Belt-and-braces: replace any remaining inf that survived dropna
     X_train = X_train.replace([np.inf, -np.inf], 0)
     X_val   = X_val.replace([np.inf, -np.inf], 0)
     X_test  = X_test.replace([np.inf, -np.inf], 0)
 
-    # ── Scale features ────────────────────────────────────────────────────────
+    # Scale features
     # Scaler is fit ONLY on training data — applied to val/test without refitting
     print("\nFitting StandardScaler on training data only ...")
     scaler = StandardScaler()
@@ -251,7 +247,7 @@ if __name__ == "__main__":
         index=X_test.index, columns=feature_cols,
     )
 
-    # ── Save outputs ──────────────────────────────────────────────────────────
+    # Save outputs
     print("\nSaving to data/processed/ ...")
 
     X_train_scaled.to_csv(os.path.join(PROCESSED_DIR, "X_train.csv"))

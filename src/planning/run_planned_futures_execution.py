@@ -1,22 +1,6 @@
 """
 Integrated planning and futures-execution workflow.
 
-Purpose
--------
-Connect the tested planning layer with the tested futures contract calculator.
-
-The workflow:
-    1. Derive the current hedge ratio from the held short NIFTY futures contracts.
-    2. Pass the current state, forecast risk regime, and rolling minimum-variance
-       core target into Unified Planning + ENHSP.
-    3. Convert the planner-approved target ratio into a whole number of short
-       NIFTY futures contracts.
-    4. Validate the exact additional margin requirement.
-    5. Store an explainable audit record.
-
-The lot size remains configurable. In the later live integration it should be
-loaded dynamically from broker instrument metadata.
-
 """
 
 from __future__ import annotations
@@ -138,10 +122,6 @@ def derive_current_hedge_ratio(
     """
     Derive the current hedge ratio from the actual held short-contract count.
 
-    current hedge ratio =
-        current short contracts * futures price * lot size
-        -------------------------------------------------
-                         portfolio value
     """
     current_short_notional = (
         current_short_contracts

@@ -1,40 +1,3 @@
-"""
-run_walkforward_lstm_with_holdout.py
-
-Walk-forward cross-validation with a final confirmatory holdout.
-
-Primary dissertation result: mean walk-forward performance across 2020-2024.
-Confirmatory result: 2025-Mar 2026 holdout (evaluated ONCE after selection).
-
-Walk-forward folds (model selection):
-    Fold 1: Train 2012-2018, Val 2019, Eval 2020
-    Fold 2: Train 2012-2019, Val 2020, Eval 2021
-    Fold 3: Train 2012-2020, Val 2021, Eval 2022
-    Fold 4: Train 2012-2021, Val 2022, Eval 2023
-    Fold 5: Train 2012-2022, Val 2023, Eval 2024
-
-Final holdout (used ONCE):
-    Train 2012-2023, Val 2024, Eval Jan2025-Mar2026
-
-All fixes applied:
-    1. Eval period boundary purged (prevents holdout leakage via forward labels)
-    2. Threshold purge passed to make_risk_labels
-    3. Full TF determinism + shuffle=False
-    4. Feature-only boundary context windows
-    5. Dynamic input shape
-    6. q33/q67 thresholds saved in metadata
-    7. Fold-data caching (GARCH fitted once per fold×horizon)
-    8. Fixed seed=42 for final retraining (not luckiest seed)
-    9. collapse_rate metric (rejects models that ignore a class >20% of runs)
-    10. Checkpoint resume support
-    11. ETA uses total_seconds() not .seconds
-
-Total runs: 5 folds x 5 horizons x 6 configs x 5 seeds = 750
-
-Run from project root:
-    python src/models/run_walkforward_lstm_with_holdout.py
-"""
-
 import os
 import sys
 import json
@@ -79,7 +42,7 @@ from features.technical_indicators import (
     log_return, rolling_volatility,
 )
 
-# ── Output paths ──────────────────────────────────────────────────────────────
+# Output paths
 REPORTS_DIR  = "outputs/reports/final_walkforward"
 MODELS_DIR   = "outputs/models/final_walkforward"
 FIGURES_DIR  = "outputs/figures/final_walkforward"
@@ -91,7 +54,7 @@ for d in [REPORTS_DIR, MODELS_DIR, FIGURES_DIR]:
 CHECKPOINT_PATH = os.path.join(REPORTS_DIR,
                                 "walkforward_results_checkpoint.csv")
 
-# ── Walk-forward folds ────────────────────────────────────────────────────────
+# Walk-forward folds
 FOLDS = [
     {"fold": 1, "train_end": "2018-12-31",
      "val_end": "2019-12-31", "eval_end": "2020-12-31"},
@@ -112,7 +75,7 @@ HOLDOUT = {
     "eval_end":  "2026-03-31",
 }
 
-# ── Experiment grid ───────────────────────────────────────────────────────────
+# Experiment grid
 HORIZONS = [3, 5, 7, 10, 14]
 
 LSTM_CONFIGS = {
@@ -144,7 +107,7 @@ STOCK_SYMBOLS = [
     "TCS", "SBIN", "LT", "BHARTIARTL", "ITC", "AXISBANK",
 ]
 
-# ── Pre-load raw data once ────────────────────────────────────────────────────
+# Pre-load raw data once
 print("Pre-loading raw data ...")
 SPOT = load_raw("NIFTY50_spot")
 FUT  = load_raw("NIFTY_futures_continuous")
@@ -187,7 +150,7 @@ BASE_FEATURES = BASE_FEATURES.replace([np.inf, -np.inf], np.nan)
 print(f"Base features: {BASE_FEATURES.shape[1]} columns "
       f"(garch_sigma added per fold)")
 
-# ── Fold data cache ───────────────────────────────────────────────────────────
+# Fold data cache
 FOLD_DATA_CACHE = {}
 
 
@@ -289,7 +252,7 @@ def get_cached_fold_data(fold_def, horizon):
     return FOLD_DATA_CACHE[key]
 
 
-# ── Sequence builders ─────────────────────────────────────────────────────────
+# Sequence builders
 
 def build_sequences(X, y, seq_len):
     Xs, ys = [], []
@@ -309,7 +272,7 @@ def build_sequences_with_context(X_ctx, X_split, y_split, seq_len):
     return np.array(Xs, dtype=np.float32), np.array(ys, dtype=np.int32)
 
 
-# ── Model builder ─────────────────────────────────────────────────────────────
+# Model builder
 
 def build_lstm(cfg, seed, input_features):
     tf.keras.backend.clear_session()
@@ -338,7 +301,7 @@ def build_lstm(cfg, seed, input_features):
     return model
 
 
-# ── Metrics ───────────────────────────────────────────────────────────────────
+# Metrics
 
 def get_metrics(y_true, y_pred, split="eval"):
     acc      = accuracy_score(y_true, y_pred)
@@ -362,7 +325,7 @@ def get_metrics(y_true, y_pred, split="eval"):
     }
 
 
-# ── Single run ────────────────────────────────────────────────────────────────
+# Single run
 
 def run_one(fold_def, horizon, cfg_name, cfg, seed):
     data = get_cached_fold_data(fold_def, horizon)
@@ -432,7 +395,7 @@ def run_one(fold_def, horizon, cfg_name, cfg, seed):
     }
 
 
-# ── Confusion matrix ──────────────────────────────────────────────────────────
+# Confusion matrix
 
 def save_cm(y_true, y_pred, title, path):
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
@@ -454,7 +417,7 @@ def save_cm(y_true, y_pred, title, path):
     plt.close()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main
 
 if __name__ == "__main__":
     total = len(FOLDS) * len(HORIZONS) * len(LSTM_CONFIGS) * len(SEEDS)
@@ -470,7 +433,7 @@ if __name__ == "__main__":
     print(f"  Started   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
 
-    # ── Checkpoint resume ─────────────────────────────────────────────────────
+    # Checkpoint resume
     results        = []
     completed_keys = set()
 
@@ -538,13 +501,13 @@ if __name__ == "__main__":
             if results:
                 pd.DataFrame(results).to_csv(CHECKPOINT_PATH, index=False)
 
-    # ── Save full results ─────────────────────────────────────────────────────
+    # Save full results
     results_df = pd.DataFrame(results)
     results_df.to_csv(
         os.path.join(REPORTS_DIR, "walkforward_results.csv"), index=False)
     print(f"\nSaved walkforward_results.csv  ({len(results_df)} rows)")
 
-    # ── Aggregate ─────────────────────────────────────────────────────────────
+    # Aggregate
     agg = results_df.groupby(["horizon", "config"]).agg(
         mean_eval_accuracy   =("eval_accuracy",    "mean"),
         mean_eval_macro_f1   =("eval_macro_f1",    "mean"),
@@ -605,7 +568,7 @@ if __name__ == "__main__":
     print(f"  Collapse rate : {best_row['collapse_rate']:.2f}")
     print(f"{'='*70}")
 
-    # ── Retrain on max data, evaluate on holdout ──────────────────────────────
+    # Retrain on max data, evaluate on holdout
     print(f"\nRetraining with seed={FINAL_SEED} (fixed, not chosen from results)")
     print("Train: 2012-2023  |  Val (early stop): 2024  |  Eval: 2025-Mar2026")
 
@@ -752,7 +715,7 @@ if __name__ == "__main__":
         print(f"Saved: best_model_report.txt")
         print(f"Saved: best_model_confusion_matrix.png")
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # Summary
     with open(os.path.join(REPORTS_DIR,
                            "walkforward_summary.txt"), "w") as f:
         f.write("HEDRA — WALK-FORWARD CV SUMMARY\n" + "="*70 + "\n\n")

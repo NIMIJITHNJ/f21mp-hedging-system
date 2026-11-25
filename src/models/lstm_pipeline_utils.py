@@ -1,8 +1,6 @@
-"""Shared utilities for leakage-safe, reproducible LSTM model selection.
+"""
+Shared utilities for leakage-safe, reproducible LSTM model selection.
 
-This module deliberately separates model tuning from final test evaluation.
-The final test period must not be inspected while selecting a horizon or an
-LSTM configuration.
 """
 
 from __future__ import annotations

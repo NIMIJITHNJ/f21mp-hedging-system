@@ -1,7 +1,6 @@
-"""Train and save the locked LSTM model using all pre-test data.
+"""
+Train and save the locked LSTM model using all pre-test data.
 
-Run only after find_best_lstm.py has produced best_lstm_config.json.
-The final test data is prepared and saved, but not evaluated here.
 """
 
 from __future__ import annotations

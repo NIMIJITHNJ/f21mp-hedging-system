@@ -1,19 +1,3 @@
-"""
-2012-01-01 to 2026-03-31
-
-Fetches daily OHLCV + OI data for:
-  - NIFTY 50 spot index (token 256265, continuous=False)
-  - NIFTY 50 continuous futures (token 15956226, continuous=True, oi=True)
-  - 10 constituent stocks (continuous=False)
-
-Futures note:
-    Token 15956226 (NIFTY26JUNFUT) with continuous=True returns the full
-    stitched continuous series back to 2012. OI is available from 2012 Q2
-    onwards (2012 Q1 returns 0 rows for futures — data starts mid-2012).
-    No spot proxy needed for this date range.
-
-"""
-
 import os
 import time
 import datetime
@@ -95,7 +79,7 @@ if __name__ == "__main__":
     kite = KiteConnect(api_key=API_KEY)
     kite.set_access_token(ACCESS_TOKEN)
 
-    # ── Nifty spot ────────────────────────────────────────────────────────────
+    # Nifty spot
     print(f"\nFetching NIFTY50_spot ({FROM_DATE} to {TO_DATE}) ...")
     spot_df = fetch_ohlcv(
         kite, NIFTY_SPOT_TOKEN,
@@ -108,7 +92,7 @@ if __name__ == "__main__":
         spot_df.to_csv(path, index=False)
         print(f"  Saved: {path}  ({len(spot_df)} rows)")
 
-    # ── Continuous futures ────────────────────────────────────────────────────
+    # Continuous futures
     print(f"\nFetching NIFTY_futures_continuous ({FROM_DATE} to {TO_DATE}) ...")
     fut_df = fetch_ohlcv(
         kite, NIFTY_CONTINUOUS_TOKEN,
@@ -123,7 +107,7 @@ if __name__ == "__main__":
         oi_nonzero = (fut_df["oi"] > 0).sum()
         print(f"  OI non-zero: {oi_nonzero}/{len(fut_df)} rows")
 
-    # ── Stocks ────────────────────────────────────────────────────────────────
+    # Stocks
     for symbol, token in STOCK_TOKENS.items():
         print(f"\nFetching {symbol} ...")
         df = fetch_ohlcv(

@@ -1,4 +1,3 @@
-
 # Updates macro_combined.csv to cover 2018-01-01 to 2025-03-28.
 
 import os
@@ -81,16 +80,16 @@ def load_bond_yield():
 if __name__ == "__main__":
     print(f"Fetching macro data ({FROM_DATE} to {TO_DATE}) ...\n")
 
-    # ── yfinance sources ──────────────────────────────────────────────────────
+    # yfinance sources
     gold   = fetch_yfinance("GC=F",  "gold_usd",  FROM_DATE, TO_DATE)
     brent  = fetch_yfinance("BZ=F",  "brent_usd", FROM_DATE, TO_DATE)
     usdinr = fetch_yfinance("INR=X", "usdinr",    FROM_DATE, TO_DATE)
 
-    # ── India 10Y bond ────────────────────────────────────────────────────────
+    # India 10Y bond
     print("\n  Loading India 10Y bond yield ...")
     bond = load_bond_yield()
 
-    # ── Load NSE calendar from spot data ─────────────────────────────────────
+    # Load NSE calendar from spot data
     spot_path = os.path.join(RAW_DIR, "NIFTY50_spot.csv")
     spot = pd.read_csv(spot_path, parse_dates=["date"])
     spot["date"] = pd.to_datetime(spot["date"]).dt.tz_localize(None).dt.normalize()
@@ -98,7 +97,7 @@ if __name__ == "__main__":
 
     print(f"\nAligning to NSE calendar ({len(nse_dates)} trading days) ...")
 
-    # ── Combine all macro series ──────────────────────────────────────────────
+    # Combine all macro series
     macro = pd.DataFrame(index=nse_dates)
     macro.index.name = "date"
 
@@ -109,7 +108,7 @@ if __name__ == "__main__":
         else:
             macro[name] = series.reindex(nse_dates, method="ffill")
 
-    # Forward fill any remaining NaNs (weekends/holidays in source data)
+
     macro = macro.ffill().bfill()
 
     nan_counts = macro.isna().sum()
@@ -123,7 +122,7 @@ if __name__ == "__main__":
     print(f"  Columns: {list(macro.columns)}")
     print(macro.tail(3))
 
-    # ── Save ──────────────────────────────────────────────────────────────────
+    # Save
     out_path = os.path.join(EXTERNAL_DIR, "macro_combined.csv")
     macro.to_csv(out_path)
     print(f"\n  Saved: {out_path}  ({len(macro)} rows)")

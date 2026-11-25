@@ -1,13 +1,3 @@
-"""
-run_horizon14.py
-
-Tests horizon=14 with all 6 LSTM configs + RF + XGBoost.
-Appends results to experiment_results.csv.
-
-Run from project root:
-    python src/models/run_horizon14.py
-"""
-
 import os, sys, warnings, random
 import numpy as np
 import pandas as pd
@@ -234,7 +224,7 @@ if __name__ == "__main__":
     print(f"HORIZON {HORIZON}-day — building feature matrix ...")
     X_tr, X_v, X_te, y_tr, y_v, y_te = build_feature_matrix(HORIZON)
 
-    # ── LSTM configs ──────────────────────────────────────────────────────────
+    # LSTM configs
     for cfg_name, cfg in LSTM_CONFIGS.items():
         print(f"  LSTM {cfg_name} h{HORIZON}  "
               f"units={cfg['lstm_units']} drop={cfg['dropout']} "
@@ -288,7 +278,7 @@ if __name__ == "__main__":
               f"test_f1={row['test_macro_f1']:.3f}  "
               f"test_high_recall={row['test_high_recall']:.3f}")
 
-    # ── Classical models ──────────────────────────────────────────────────────
+    # Classical models
     for model_name in ["RandomForest", "XGBoost"]:
         print(f"  {model_name} h{HORIZON}")
         try:
@@ -325,7 +315,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"    ERROR: {e}")
 
-    # ── Append to existing results ────────────────────────────────────────────
+    # Append to existing results
     new_df   = pd.DataFrame(results)
     csv_path = os.path.join(REPORTS_DIR, "experiment_results.csv")
 
@@ -337,7 +327,7 @@ if __name__ == "__main__":
 
     combined.to_csv(csv_path, index=False)
 
-    # ── Print updated summary ─────────────────────────────────────────────────
+    # Print updated summary
     display_cols = ["experiment", "test_accuracy", "test_macro_f1",
                     "test_high_recall", "val_macro_f1"]
 

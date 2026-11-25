@@ -444,7 +444,7 @@ def main() -> None:
     combined_df.to_csv(combined_path, index=False)
 
     lines = [
-        "# Proposal-Aligned Four Strategy Evaluation Across Periods",
+        "# Four Strategy Evaluation Across Periods",
         "",
         "This report summarises the four proposal strategies across the selection period and confirmatory period. The confirmatory period should be treated as the main out-of-sample result.",
         "",

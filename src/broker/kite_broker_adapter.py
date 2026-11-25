@@ -1,19 +1,4 @@
-﻿"""
-kite_broker_adapter.py
-
-Reusable Kite broker-data adapter for the Hedra hedge-planning workflow.
-
-This module does NOT place orders. It only reads live broker/account data:
-- nearest NIFTY futures contract
-- futures quote / last traded price
-- lot size
-- expiry and days to expiry
-- current NIFTY futures position
-- available margin
-
-Run from project root:
-    python src/broker/kite_broker_adapter.py
-"""
+"""Read broker market and account data for hedge planning. Broker access is read-only."""
 
 from __future__ import annotations
 
@@ -152,9 +137,6 @@ def get_current_nifty_futures_position(
     """
     Read current net position for the selected NIFTY futures contract.
 
-    In Kite, a short futures quantity is normally negative.
-    Example:
-        quantity = -2 means 2 short contracts.
     """
     positions = kite.positions()
     net_positions = positions.get("net", [])
@@ -192,7 +174,6 @@ def get_current_nifty_futures_position(
 def get_available_margin(kite: KiteConnect) -> Optional[float]:
     """
     Read available equity margin.
-
     Kite margin response structure can vary slightly, so this function tries
     common fields safely and returns None if margin cannot be identified.
     """

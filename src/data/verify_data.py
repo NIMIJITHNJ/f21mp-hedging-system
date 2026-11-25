@@ -1,14 +1,3 @@
-"""
-verify_data.py
-
-Cross-verification of all raw CSV files in data/raw/.
-Checks for completeness, missing values, date alignment,
-price sanity, and futures OI validity.
-
-Run from the project root:
-    python src/data/verify_data.py
-"""
-
 import os
 import pandas as pd
 import numpy as np
@@ -60,7 +49,7 @@ def section(title):
     print(f"{'─' * 60}")
 
 
-# ── 1. File presence ──────────────────────────────────────────────────────────
+# 1. File presence
 
 section("1. File presence")
 
@@ -73,7 +62,7 @@ for fname in EXPECTED_FILES:
         log(fname, FAIL, "File not found")
 
 
-# ── 2. Row count ──────────────────────────────────────────────────────────────
+# 2. Row count
 
 section("2. Row count (expected 557 per file)")
 
@@ -91,7 +80,7 @@ for fname in EXPECTED_FILES:
         log(fname, FAIL, f"{rows} rows (expected {EXPECTED_ROWS})")
 
 
-# ── 3. Date range ─────────────────────────────────────────────────────────────
+# 3. Date range
 
 section("3. Date range")
 
@@ -114,7 +103,7 @@ for fname in EXPECTED_FILES:
         reference_dates = set(df["date"].dt.strftime("%Y-%m-%d"))
 
 
-# ── 4. Date alignment across all files ───────────────────────────────────────
+# 4. Date alignment across all files
 
 section("4. Date alignment (all files share the same trading days)")
 
@@ -134,7 +123,7 @@ if reference_dates:
                 f"{len(diff)} date(s) differ: {sorted(diff)[:5]}")
 
 
-# ── 5. Missing values ─────────────────────────────────────────────────────────
+# 5. Missing values
 
 section("5. Missing values")
 
@@ -154,7 +143,7 @@ for fname in EXPECTED_FILES:
         log(fname, WARN, f"{zeros} zero price(s) in OHLC columns")
 
 
-# ── 6. OHLC sanity ───────────────────────────────────────────────────────────
+# 6. OHLC sanity
 
 section("6. OHLC sanity (high >= low, close within high/low)")
 
@@ -176,7 +165,7 @@ for fname in EXPECTED_FILES:
         log(fname, FAIL, ", ".join(issues))
 
 
-# ── 7. Duplicate dates ───────────────────────────────────────────────────────
+# 7. Duplicate dates
 
 section("7. Duplicate dates")
 
@@ -192,7 +181,7 @@ for fname in EXPECTED_FILES:
         log(fname, FAIL, f"{dups} duplicate date(s)")
 
 
-# ── 8. Futures-specific checks ───────────────────────────────────────────────
+# 8. Futures-specific checks
 
 section("8. Futures: OI and volume checks")
 
@@ -229,7 +218,7 @@ if os.path.exists(fut_path):
             f"Min: {oi_min:,}  Max: {oi_max:,}")
 
 
-# ── 9. Price continuity ───────────────────────────────────────────────────────
+# 9. Price continuity
 
 section("9. Price continuity (no extreme daily moves > 15%)")
 
@@ -250,7 +239,7 @@ for fname in EXPECTED_FILES:
             + (" ..." if len(dates) > 3 else ""))
 
 
-# ── 10. Split period check ───────────────────────────────────────────────────
+# 10. Split period check
 
 section("10. Train / Val / Test split row counts")
 
@@ -269,7 +258,7 @@ for fname in ["NIFTY50_spot.csv", "NIFTY_futures_continuous.csv"]:
         f"Train: {len(train)} rows | Val: {len(val)} rows | Test: {len(test)} rows")
 
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# Summary
 
 section("Summary")
 

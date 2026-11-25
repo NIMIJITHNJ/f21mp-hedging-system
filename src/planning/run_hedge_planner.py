@@ -1,15 +1,6 @@
 """
 Constraint-aware hedging planner using Unified Planning + ENHSP.
 
-The broader proposal action "adjust hedge ratio" is refined into two explicit
-actions for clearer explanations and audit logs:
-    OPEN_HEDGE
-    INCREASE_HEDGE
-    REDUCE_HEDGE
-    CLOSE_HEDGE
-    HOLD_POSITION
-    ROLL_FUTURES_FORWARD
-
 """
 
 from __future__ import annotations

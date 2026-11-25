@@ -1,0 +1,16 @@
+(define (problem autonomous_symbolic_hedge_plan_common_margin_insufficient-problem)
+ (:domain autonomous_symbolic_hedge_plan_common_margin_insufficient-domain)
+ (:init
+              (position_open)
+              (hedge_needed)
+              (target_above_current)
+              (rehedge_allowed)
+              (cost_allowed)
+              (hold_allowed)
+ )
+ (:goal (and 
+           (decision_completed)
+           (or (not (position_open)) (not (roll_required)) (roll_completed))
+        )
+ )
+)

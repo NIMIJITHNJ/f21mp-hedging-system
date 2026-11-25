@@ -1,32 +1,12 @@
-"""
-technical_indicators.py
-
-Pure pandas/numpy implementations of all technical and volatility indicators
-used in the feature engineering pipeline. Each function takes a DataFrame
-and returns a named Series aligned to the same index.
-
-No file I/O here — this module is imported by build_features.py.
-
-Indicators implemented:
-    Technical  : RSI(14), MACD(12,26,9), VWAP, ATR(14), SMA20 crossover
-    OI         : OI % change, OI/volume ratio, OI 20-day MA
-    Volatility : 20-day rolling std of log returns, log return
-"""
-
 import numpy as np
 import pandas as pd
 
 
-# ── Technical indicators ──────────────────────────────────────────────────────
+# Technical indicators
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     """
     Relative Strength Index using Wilder's smoothing (EMA with alpha=1/period).
-    Values range 0–100. Overbought above 70, oversold below 30.
-
-    Formula:
-        RSI = 100 - 100 / (1 + RS)
-        RS  = avg_gain / avg_loss  (Wilder smoothed)
     """
     delta = close.diff()
     gain  = delta.clip(lower=0)
@@ -48,10 +28,6 @@ def macd(close: pd.Series,
     """
     Moving Average Convergence Divergence.
 
-    Returns:
-        macd_line   : EMA(fast) - EMA(slow)
-        signal_line : EMA(macd_line, signal)
-        histogram   : macd_line - signal_line
     """
     ema_fast    = close.ewm(span=fast,   adjust=False).mean()
     ema_slow    = close.ewm(span=slow,   adjust=False).mean()
@@ -69,16 +45,7 @@ def vwap(high: pd.Series, low: pd.Series,
          close: pd.Series, volume: pd.Series) -> pd.Series:
     """
     Volume Weighted Average Price using daily OHLCV.
-    Since we have daily bars (not intraday), VWAP is approximated using
-    a 20-day rolling cumulative calculation to preserve the volume-weighting
-    signal over time.
 
-    Formula: VWAP_t = sum(TP * V, window) / sum(V, window)
-    where TP = (high + low + close) / 3
-
-    Note: pass futures volume, not spot index volume — the Nifty 50 spot
-    index carries zero volume since it is not a tradeable instrument.
-    If volume is zero throughout, falls back to the 20-day SMA of TP.
     """
     tp      = (high + low + close) / 3
     cum_tpv = (tp * volume).rolling(window=20).sum()
@@ -98,8 +65,6 @@ def atr(high: pd.Series, low: pd.Series,
     """
     Average True Range using Wilder's smoothing.
 
-    True Range = max(high-low, |high-prev_close|, |low-prev_close|)
-    ATR = Wilder EMA of True Range over `period` days.
     """
     prev_close = close.shift(1)
     tr = pd.concat([
@@ -117,8 +82,7 @@ def sma_crossover(close: pd.Series,
                   fast: int = 10, slow: int = 20) -> pd.Series:
     """
     SMA crossover signal.
-    Returns +1 when fast SMA > slow SMA (uptrend), -1 otherwise.
-    Used as a binary trend direction feature.
+
     """
     sma_fast = close.rolling(window=fast).mean()
     sma_slow = close.rolling(window=slow).mean()
@@ -127,12 +91,12 @@ def sma_crossover(close: pd.Series,
     return signal
 
 
-# ── Open interest features ────────────────────────────────────────────────────
+# Open interest features
 
 def oi_pct_change(oi: pd.Series, period: int = 1) -> pd.Series:
     """
     Percentage change in open interest over `period` days.
-    Rising OI with rising price confirms trend; falling OI suggests reversal.
+
     """
     pct        = oi.pct_change(periods=period) * 100
     pct.name   = f"oi_pct_change_{period}d"
@@ -142,7 +106,7 @@ def oi_pct_change(oi: pd.Series, period: int = 1) -> pd.Series:
 def oi_volume_ratio(oi: pd.Series, volume: pd.Series) -> pd.Series:
     """
     Ratio of open interest to trading volume.
-    High ratio indicates stronger participant commitment to existing positions.
+
     """
     ratio      = oi / volume.replace(0, np.nan)
     ratio.name = "oi_vol_ratio"
@@ -152,19 +116,19 @@ def oi_volume_ratio(oi: pd.Series, volume: pd.Series) -> pd.Series:
 def oi_moving_average(oi: pd.Series, window: int = 20) -> pd.Series:
     """
     Rolling mean of open interest over `window` days.
-    Smooths the daily OI signal to identify broader positioning trends.
+
     """
     ma      = oi.rolling(window=window).mean()
     ma.name = f"oi_ma_{window}"
     return ma
 
 
-# ── Volatility features ───────────────────────────────────────────────────────
+# Volatility features
 
 def log_return(close: pd.Series) -> pd.Series:
     """
     Daily log return: ln(close_t / close_{t-1}).
-    Used directly as a feature and as input to the volatility calculations.
+
     """
     ret      = np.log(close / close.shift(1))
     ret.name = "log_return"
@@ -174,8 +138,7 @@ def log_return(close: pd.Series) -> pd.Series:
 def rolling_volatility(close: pd.Series, window: int = 20) -> pd.Series:
     """
     Annualised rolling standard deviation of log returns.
-    Multiplied by sqrt(252) to convert daily std to annualised volatility.
-    This is the realised volatility estimate used for risk label generation.
+
     """
     log_ret  = log_return(close)
     vol      = log_ret.rolling(window=window).std() * np.sqrt(252)

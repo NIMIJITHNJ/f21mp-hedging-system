@@ -1,49 +1,6 @@
 """
 Leakage-safe DCC-GJR-GARCH hedge-ratio benchmark for the Hedra system.
 
-Purpose
--------
-Evaluate whether a transparent Dynamic Conditional Correlation model improves
-the practical Nifty 50 futures hedge ratio for the equal-weight 10-stock
-portfolio.
-
-Model
------
-Marginal volatility models:
-    - Portfolio returns: GJR-GARCH(1,1) with Student-t errors
-    - Futures returns:   GJR-GARCH(1,1) with Student-t errors
-
-Dependence model:
-    - DCC(1,1), estimated by Gaussian quasi-maximum likelihood on
-      standardized marginal residuals.
-
-Dynamic minimum-variance hedge ratio:
-    h_t = Cov_t(R_portfolio, R_futures) / Var_t(R_futures)
-
-Timing rule
------------
-The hedge ratio used for return on trading day t is calculated from the
-conditional covariance matrix available before return t is observed.
-The annual model parameters are estimated only using data available up to the
-previous calendar year-end. No same-day or future return enters h_t.
-
-Annual expanding refits
------------------------
-For each evaluation year Y:
-    - fit marginal GJR-GARCH models using data <= 31 Dec Y-1
-    - fit DCC parameters using standardized residuals <= 31 Dec Y-1
-    - recursively update the conditional covariance state through year Y
-      using newly observed returns as time advances
-
-Comparison strategies
----------------------
-1. no_hedge
-2. static_50
-3. literature_vecm_static
-4. portfolio_static_minvar
-5. rolling_min_variance
-6. dcc_gjr_garch
-
 """
 
 from __future__ import annotations
@@ -125,7 +82,6 @@ def fixed_conditional_sigma(
     """
     Recurse conditional sigma through a return series using fixed parameters.
 
-    For row t, sigma[t] is conditional on information observed before return t.
     """
     fixed = arch_model(
         returns_pct,
@@ -138,8 +94,6 @@ def fixed_conditional_sigma(
 def theta_to_dcc(theta: np.ndarray) -> tuple[float, float]:
     """
     Map unconstrained optimiser parameters to valid DCC coefficients.
-
-    Guarantees: a > 0, b > 0 and a + b < 0.999.
     """
     exp_theta = np.exp(
         np.clip(
@@ -194,8 +148,6 @@ def dcc_negative_log_likelihood(
     """
     Gaussian QML objective for DCC(1,1).
 
-    The DCC state used for observation t is updated using z[t-1], so the
-    likelihood remains aligned with the available information set.
     """
     a, b = theta_to_dcc(theta)
     q_t = np.array(q_bar, dtype=float, copy=True)
@@ -280,10 +232,6 @@ def build_conditional_hedge_ratio(
     """
     Recurse DCC state and build the hedge ratio available before each return.
 
-    For row t:
-        ratio[t] = covariance[t] / futures_variance[t]
-
-    The Q state for t is based on standardized residuals through t-1 only.
     """
     index = standardized_residuals.index
     z_values = standardized_residuals.to_numpy(dtype=float)
@@ -331,7 +279,6 @@ def build_annual_oos_dcc_series(
     """
     Generate annual out-of-sample DCC hedge ratios from 2020 onward.
 
-    Each year uses parameters fitted only through the previous year-end.
     """
     returns_pct = (returns[["portfolio", "futures"]] * 100.0).astype(float)
     final_year = int(min(pd.Timestamp(BACKTEST_END).year, returns_pct.index.max().year))

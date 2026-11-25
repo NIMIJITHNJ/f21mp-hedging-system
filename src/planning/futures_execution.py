@@ -1,40 +1,6 @@
 """
 Execution-calculation layer for Nifty futures hedging system.
 
-Purpose
--------
-Convert a planner-recommended hedge ratio into an executable number of short
-Nifty futures contracts.
-
-The planning layer decides whether to:
-    OPEN_HEDGE
-    INCREASE_HEDGE
-    REDUCE_HEDGE
-    CLOSE_HEDGE
-    HOLD_POSITION
-    ROLL_FUTURES_FORWARD
-
-This module converts the target hedge ratio into:
-    - target futures notional
-    - required short-contract count
-    - change from the currently held short-contract count
-    - buy/sell execution instruction
-    - achieved hedge ratio after whole-contract rounding
-    - residual hedge-ratio error
-    - additional margin requirement, when margin inputs are provided
-
-Important
----------
-The Nifty futures lot size is configurable. It should later come from broker
-instrument metadata rather than being hardcoded.
-
-Formula
--------
-required contracts =
-    portfolio value * target hedge ratio
-    ------------------------------------
-    futures price * lot size
-
 """
 
 from __future__ import annotations
@@ -135,14 +101,6 @@ def round_contract_count(
     """
     Convert fractional futures contracts into a valid whole-contract count.
 
-    nearest:
-        minimise absolute notional mismatch
-
-    floor:
-        avoid exceeding the target hedge notional
-
-    ceil:
-        avoid falling below the target hedge notional
     """
     if mode == "floor":
         return max(0, int(math.floor(raw_contracts)))

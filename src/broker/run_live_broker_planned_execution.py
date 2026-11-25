@@ -1,19 +1,4 @@
-﻿"""
-run_live_broker_planned_execution.py
-
-Live broker-data integration test for the Hedra hedge-planning workflow.
-
-This script:
-1. Reads live NIFTY futures contract data from Kite.
-2. Uses dissertation simulation settings for portfolio exposure and margin reserve.
-3. Runs the constraint-aware hedge planner.
-4. Converts the planner output into whole futures contracts.
-
-This does NOT place orders.
-
-Run from project root:
-    python src/broker/run_live_broker_planned_execution.py
-"""
+"""Combine read-only Kite data with simulated exposure and margin to recommend a hedge."""
 
 from __future__ import annotations
 
@@ -36,7 +21,7 @@ from src.planning.run_planned_futures_execution import (
 def main() -> None:
     snapshot = get_live_broker_snapshot()
 
-    # Dissertation simulation settings.
+    # Simulation settings.
     # Kite is used for live futures contract data and price only.
     total_capital = 10_000_000.0
     stock_allocation = total_capital * 0.80
@@ -49,7 +34,7 @@ def main() -> None:
     risk_regime = "HIGH"
     core_target_ratio = 0.70
 
-    # Temporary margin estimate for integration testing only.
+    # Margin estimate used for broker integration testing.
     # Later this can be replaced by an exact broker/SPAN margin calculation.
     margin_per_contract = snapshot.futures_price * snapshot.contract.lot_size * 0.12
 
